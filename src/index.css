@@ -1,1 +1,14 @@
 @import "tailwindcss";
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+  background-color: #0A0E17;
+}
+
+body {
+  color: #e2e8f0;
+  overscroll-behavior: none;
+}

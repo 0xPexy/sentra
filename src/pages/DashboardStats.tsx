@@ -1,55 +1,65 @@
 import { useEffect, useState } from "react";
-import { useAuth } from "../state/auth";
-import { api } from "../lib/api";
 import StatCard from "../components/cards/StatCard";
+import PageHeader from "../components/layout/PageHeader";
 import TxTable from "../components/tables/TxTable";
-import { getWalletClient } from "../lib/viem";
+import { ApiError, api } from "../lib/api";
+import { useAuth } from "../state/auth";
+import { fetchPaymasterDeposit, formatWeiToEth } from "../lib/viem";
+import { isEthAddress } from "../lib/address";
 
 export default function DashboardStats() {
   const { token } = useAuth();
   const [deposit, setDeposit] = useState<string>("-");
   const [ops, setOps] = useState<any[]>([]);
-  const PAYMASTER_ID = 1; // 데모용
 
   useEffect(() => {
     if (!token) return;
     const load = async () => {
       try {
-        const balance = await api.getDeposit(token, PAYMASTER_ID);
-        setDeposit(balance.depositWei);
+        const paymaster = await api.getPaymaster(token);
+        if (
+          paymaster.address &&
+          paymaster.address !== "0x0000000000000000000000000000000000000000" &&
+          paymaster.entryPoint &&
+          isEthAddress(paymaster.address) &&
+          isEthAddress(paymaster.entryPoint)
+        ) {
+          const value = await fetchPaymasterDeposit(
+            paymaster.entryPoint as `0x${string}`,
+            paymaster.address as `0x${string}`,
+          );
+          const eth = Number.parseFloat(formatWeiToEth(value));
+          setDeposit(Number.isNaN(eth) ? "-" : eth.toFixed(2));
+        } else {
+          setDeposit("-");
+        }
       } catch (error) {
-        console.error(error);
+        if (error instanceof ApiError && error.status === 404) {
+          setDeposit("-");
+        } else {
+          console.error(error);
+        }
       }
       try {
-        const operations = await api.getStats(token, PAYMASTER_ID);
+        const operations = await api.getStats(token);
         setOps(operations);
       } catch (error) {
-        console.error(error);
+        if (error instanceof ApiError && error.status === 404) {
+          setOps([]);
+        } else {
+          console.error(error);
+        }
       }
     };
     load();
   }, [token]);
 
-  const connectWallet = async () => {
-    const wc = getWalletClient();
-    // 메타마스크 연결 예시 (주소 요청)
-    await wc.requestAddresses?.();
-  };
-
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Stats</h2>
-        <button
-          onClick={connectWallet}
-          className="px-3 py-2 bg-slate-800 rounded hover:bg-slate-700"
-        >
-          Connect Wallet
-        </button>
-      </div>
+      <PageHeader title="Stats" />
 
       <div className="grid grid-cols-3 gap-4">
-        <StatCard label="Deposit (wei)" value={deposit} />
+        <StatCard label="Deposit (ETH)" value={deposit} />
         <StatCard label="Allowed Contracts" value={42} />
         <StatCard label="Success Rate" value={"98.4%"} />
       </div>

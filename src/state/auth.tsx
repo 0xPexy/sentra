@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState } from "react";
 
 const BYPASS = import.meta.env.VITE_AUTH_BYPASS === "1";
+const BYPASS_TOKEN = import.meta.env.VITE_DEV_TOKEN || "dev-token";
 
 type AuthCtx = {
   token: string | null;
@@ -17,7 +18,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({
   children,
 }) => {
   const [token, setToken] = useState<string | null>(() =>
-    BYPASS ? "dev-token" : localStorage.getItem("jwt")
+    BYPASS ? BYPASS_TOKEN : localStorage.getItem("jwt")
   );
   const logout = () => {
     if (BYPASS) return; // dev 모드에선 무시
@@ -26,7 +27,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({
   };
   const setAndPersist = (t: string | null) => {
     if (BYPASS) {
-      setToken("dev-token");
+      setToken(BYPASS_TOKEN);
       return;
     }
     setToken(t);

@@ -1,82 +1,99 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../lib/api";
-import type { ContractWL, FunctionWL, Paymaster, UserWL } from "../lib/api";
-import { ENTRYPOINT, ENTRYPOINT_ABI, getWalletClient, parseEthAmountToValue, publicClient } from "../lib/viem";
-import { parseSelectorsList } from "../lib/selectors";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ContractWL, PaymasterResponse } from "../lib/api";
+import { ApiError, api } from "../lib/api";
+import {
+  ENTRYPOINT_ABI,
+  fetchPaymasterDeposit,
+  formatWeiToEth,
+  getPublicClient,
+  getWalletClient,
+  parseEthAmountToValue,
+} from "../lib/viem";
+import { parseSelectorEntries } from "../lib/selectors";
+import type { SelectorEntry } from "../lib/selectors";
 import { useAuth } from "../state/auth";
+import PageHeader from "../components/layout/PageHeader";
+import { isEthAddress } from "../lib/address";
 
-const PM_ID = 1; // TODO: wire up dynamic selection if multiple paymasters are supported
-
-type Toast = { type: "success" | "error"; message: string };
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 export default function DashboardConfig() {
   const { token } = useAuth();
-  const [pm, setPm] = useState<Paymaster | null>(null);
-  const [depositWei, setDepositWei] = useState<string>("-");
+  const [pm, setPm] = useState<PaymasterResponse | null>(null);
+  const [depositWei, setDepositWei] = useState<bigint | null>(null);
+  const [usdPerOp, setUsdPerOp] = useState<number | null>(null);
   const [contracts, setContracts] = useState<ContractWL[]>([]);
-  const [funcs, setFuncs] = useState<FunctionWL[]>([]);
-  const [users, setUsers] = useState<UserWL[]>([]);
+  const [users, setUsers] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState<Toast | null>(null);
-  const toastTimeout = useRef<number | undefined>(undefined);
-
-  const showToast = useCallback((type: Toast["type"], message: string) => {
-    if (toastTimeout.current) {
-      window.clearTimeout(toastTimeout.current);
+  const handleError = useCallback((error: unknown) => {
+    if (error instanceof ApiError && error.status === 404) {
+      return;
     }
-    setToast({ type, message });
-    toastTimeout.current = window.setTimeout(() => setToast(null), 4000);
+    console.error(error);
   }, []);
 
-  const getErrorMessage = useCallback((error: unknown) => {
-    if (error instanceof Error) {
-      try {
-        const parsed = JSON.parse(error.message);
-        if (typeof parsed === "string") return parsed;
-        if (parsed && typeof parsed === "object" && "message" in parsed) {
-          return String((parsed as { message?: unknown }).message ?? error.message);
-        }
-      } catch {
-        // noop – fall back to error.message below
-      }
-      return error.message;
-    }
-    return "Unexpected error occurred";
-  }, []);
-
-  const handleError = useCallback(
-    (error: unknown) => {
-      console.error(error);
-      showToast("error", getErrorMessage(error));
-    },
-    [getErrorMessage, showToast],
-  );
-
-  const handleSuccess = useCallback(
-    (message: string) => {
-      showToast("success", message);
-    },
-    [showToast],
-  );
+  const handleSuccess = useCallback(() => undefined, []);
 
   const refresh = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     try {
-      const [paymaster, bal, cs, fs, us] = await Promise.all([
-        api.getPaymaster(token, PM_ID),
-        api.getDeposit(token, PM_ID),
-        api.listContracts(token, PM_ID),
-        api.listFunctions(token, PM_ID),
-        api.listUsers(token, PM_ID),
-      ]);
+      const paymaster = await api.getPaymaster(token);
       setPm(paymaster);
-      setDepositWei(bal.depositWei);
-      setContracts(cs);
-      setFuncs(fs);
-      setUsers(us);
+      const usdMax = paymaster.usdPerMaxOp ?? paymaster.usdcMaxPerOpUSD;
+      setUsdPerOp(
+        typeof usdMax === "number" && Number.isFinite(usdMax) ? usdMax : null
+      );
+
+      const [contractsResult, usersResult] = await Promise.allSettled([
+        api.listContracts(token),
+        api.listUsers(token),
+      ]);
+
+      if (contractsResult.status === "fulfilled") {
+        setContracts(contractsResult.value);
+      } else {
+        handleError(contractsResult.reason);
+        setContracts(paymaster.contracts ?? []);
+      }
+
+      if (usersResult.status === "fulfilled") {
+        setUsers(
+          usersResult.value
+            .filter((entry) => typeof entry === "string")
+            .map((entry: string) => entry.trim())
+            .filter((entry) => entry.length > 0)
+        );
+      } else {
+        handleError(usersResult.reason);
+        setUsers([]);
+      }
+
+      if (
+        paymaster.address &&
+        paymaster.address !== ZERO_ADDRESS &&
+        paymaster.entryPoint &&
+        isEthAddress(paymaster.entryPoint) &&
+        isEthAddress(paymaster.address)
+      ) {
+        const deposit = await fetchPaymasterDeposit(
+          paymaster.entryPoint as `0x${string}`,
+          paymaster.address as `0x${string}`
+        );
+        setDepositWei(deposit);
+      } else {
+        setDepositWei(null);
+      }
     } catch (error) {
-      handleError(error);
+      if (error instanceof ApiError && error.status === 404) {
+        setPm(null);
+        setUsdPerOp(null);
+        setContracts([]);
+        setUsers([]);
+        setDepositWei(null);
+      } else {
+        handleError(error);
+      }
     } finally {
       setLoading(false);
     }
@@ -87,31 +104,16 @@ export default function DashboardConfig() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  useEffect(
-    () => () => {
-      if (toastTimeout.current) {
-        window.clearTimeout(toastTimeout.current);
-      }
-    },
-    [],
-  );
-
   if (!token) return null;
+
+  const isRegistered = useMemo(
+    () => Boolean(pm?.address && pm.address !== ZERO_ADDRESS),
+    [pm?.address]
+  );
 
   return (
     <div className="space-y-8">
-      <h2 className="text-xl font-semibold">Configuration</h2>
-      {toast && (
-        <div
-          className={`rounded-lg border px-4 py-3 text-sm ${
-            toast.type === "error"
-              ? "border-red-500/40 bg-red-500/10 text-red-300"
-              : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-          }`}
-        >
-          {toast.message}
-        </div>
-      )}
+      <PageHeader title="Configuration" />
       {loading && (
         <div className="rounded-lg border border-slate-800 bg-[#0f1422] p-4 text-sm text-slate-400">
           Loading paymaster configuration…
@@ -121,6 +123,7 @@ export default function DashboardConfig() {
       <PaymasterCard
         pm={pm}
         depositWei={depositWei}
+        usdPerOp={usdPerOp}
         onSaved={refresh}
         onError={handleError}
         onSuccess={handleSuccess}
@@ -128,15 +131,27 @@ export default function DashboardConfig() {
 
       <AllowlistCard
         contracts={contracts}
-        funcs={funcs}
         onChange={refresh}
         onError={handleError}
         onSuccess={handleSuccess}
+        disabled={!isRegistered}
       />
 
-      <GasPolicyCard pm={pm} onSaved={refresh} onError={handleError} onSuccess={handleSuccess} />
+      <GasPolicyCard
+        pm={pm}
+        onSaved={refresh}
+        onError={handleError}
+        onSuccess={handleSuccess}
+        disabled={!isRegistered}
+      />
 
-      <UserWhitelistCard users={users} onChange={refresh} onError={handleError} onSuccess={handleSuccess} />
+      <UserWhitelistCard
+        users={users}
+        onChange={refresh}
+        onError={handleError}
+        onSuccess={handleSuccess}
+        disabled={!isRegistered}
+      />
     </div>
   );
 }
@@ -149,32 +164,73 @@ type FeedbackHandlers = {
 function PaymasterCard({
   pm,
   depositWei,
+  usdPerOp,
   onSaved,
   onSuccess,
   onError,
 }: {
-  pm: Paymaster | null;
-  depositWei: string;
+  pm: PaymasterResponse | null;
+  depositWei: bigint | null;
+  usdPerOp: number | null;
   onSaved: () => void;
 } & FeedbackHandlers) {
   const { token } = useAuth();
   const [addr, setAddr] = useState(pm?.address ?? "");
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => setAddr(pm?.address ?? ""), [pm?.address]);
-
-  const unregistered = useMemo(
-    () => !pm?.address || pm.address === "0x0000000000000000000000000000000000000000",
-    [pm],
+  const [editing, setEditing] = useState(
+    !pm?.address || pm.address === ZERO_ADDRESS
   );
 
+  const addressValid = useMemo(
+    () => (addr.trim() === "" ? false : isEthAddress(addr)),
+    [addr]
+  );
+
+  useEffect(() => {
+    setAddr(pm?.address ?? "");
+    setEditing(!pm?.address || pm.address === ZERO_ADDRESS);
+  }, [pm?.address]);
+
+  const unregistered = useMemo(
+    () => !pm?.address || pm.address === ZERO_ADDRESS,
+    [pm]
+  );
+
+  const entryPointValid = useMemo(
+    () => (pm?.entryPoint ? isEthAddress(pm.entryPoint) : false),
+    [pm?.entryPoint]
+  );
+
+  const formattedDeposit = useMemo(() => {
+    if (depositWei === null) return "-";
+    const value = Number.parseFloat(formatWeiToEth(depositWei));
+    if (Number.isNaN(value)) return "-";
+    return value.toFixed(2);
+  }, [depositWei]);
+
+  const formattedUsdLimit = useMemo(() => {
+    if (usdPerOp === null || Number.isNaN(usdPerOp)) return "-";
+    return usdPerOp.toFixed(2);
+  }, [usdPerOp]);
+
   const save = async () => {
-    if (!token || !pm) return;
+    if (!token || !addressValid) return;
     setSaving(true);
     try {
-      await api.updatePaymaster(token, pm.id, { address: addr });
+      if (unregistered) {
+        await api.createPaymaster(token, {
+          address: addr,
+          usdPerMaxOp: usdPerOp ?? undefined,
+        });
+      } else {
+        await api.updatePaymaster(token, {
+          address: addr,
+          usdPerMaxOp: usdPerOp ?? undefined,
+        });
+      }
       onSuccess("Paymaster address saved");
       onSaved();
+      setEditing(false);
     } catch (error) {
       onError(error);
     } finally {
@@ -183,8 +239,12 @@ function PaymasterCard({
   };
 
   const deposit = async () => {
-    if (!pm?.address) {
+    if (!pm?.address || !isEthAddress(pm.address)) {
       onError(new Error("Set Paymaster address first"));
+      return;
+    }
+    if (!pm.entryPoint || !entryPointValid) {
+      onError(new Error("Configure a valid EntryPoint address"));
       return;
     }
     const amount = window.prompt("Deposit amount in ETH (e.g. 0.05)");
@@ -202,15 +262,17 @@ function PaymasterCard({
       }
       const hash = await wallet.writeContract({
         account,
-        address: ENTRYPOINT,
+        chain: null,
+        address: pm.entryPoint as `0x${string}`,
         abi: ENTRYPOINT_ABI,
         functionName: "depositTo",
         args: [pm.address as `0x${string}`],
         value,
       });
       onSuccess(`Transaction submitted: ${hash}`);
-      await publicClient.waitForTransactionReceipt({ hash });
+      await getPublicClient().waitForTransactionReceipt({ hash });
       onSuccess("Deposit confirmed on-chain");
+      window.dispatchEvent(new CustomEvent("sentra:wallet-refresh"));
       onSaved();
     } catch (error) {
       onError(error);
@@ -223,7 +285,9 @@ function PaymasterCard({
         <h3 className="font-semibold">Paymaster</h3>
         <span
           className={`rounded px-2 py-1 text-xs ${
-            unregistered ? "bg-red-900/40 text-red-300" : "bg-emerald-900/30 text-emerald-300"
+            unregistered
+              ? "bg-red-900/40 text-red-300"
+              : "bg-emerald-900/30 text-emerald-300"
           }`}
         >
           {unregistered ? "Unregistered" : "Registered"}
@@ -231,38 +295,87 @@ function PaymasterCard({
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
-        <div className="md:col-span-2">
-          <label className="mb-1 block text-sm text-slate-400">Paymaster Contract Address</label>
-          <input
-            className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono outline-none"
-            value={addr}
-            onChange={(e) => setAddr(e.target.value)}
-            placeholder="0x..."
-          />
-        </div>
-        <div className="flex items-end gap-2">
-          <button
-            onClick={save}
-            disabled={saving}
-            className="rounded bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500 disabled:opacity-60"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
+        <div className="md:col-span-2 space-y-2">
+          <div>
+            <label className="mb-1 block text-sm text-slate-400">
+              Paymaster Contract Address
+            </label>
+            {editing ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  className={`w-full flex-1 rounded border px-3 py-2 font-mono outline-none ${
+                    addressValid
+                      ? "border-slate-700 bg-slate-900"
+                      : "border-red-500/60 bg-red-500/10"
+                  }`}
+                  value={addr}
+                  onChange={(e) => setAddr(e.target.value)}
+                  placeholder="0x..."
+                />
+                <button
+                  onClick={save}
+                  disabled={saving || !addressValid}
+                  className="rounded bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500 disabled:opacity-60"
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+                {!unregistered && (
+                  <button
+                    onClick={() => {
+                      setAddr(pm?.address ?? "");
+                      setEditing(false);
+                    }}
+                    className="rounded border border-slate-700 px-3 py-2 text-sm hover:bg-slate-800"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-sm text-slate-200">
+                  {pm?.address}
+                </span>
+                <button
+                  onClick={() => setEditing(true)}
+                  className="rounded border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800"
+                >
+                  Edit
+                </button>
+              </div>
+            )}
+          </div>
+          <div>
+            <label className="mb-1 block text-sm text-slate-400">
+              Entry Point Address
+            </label>
+            <div className="font-mono text-sm text-slate-200">
+              {entryPointValid ? pm?.entryPoint : "-"}
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="grid items-end gap-3 md:grid-cols-3">
-        <div>
-          <div className="mb-1 text-sm text-slate-400">Deposit (wei)</div>
-          <div className="font-mono text-2xl font-semibold">{depositWei}</div>
-        </div>
-        <div className="md:col-span-2 flex justify-end gap-2">
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-3">
+          <div className="flex flex-col justify-center leading-tight">
+            <span className="text-xs text-slate-400">Deposit (ETH)</span>
+            <span className="font-mono text-lg font-semibold leading-6">
+              {formattedDeposit}
+            </span>
+          </div>
           <button
             onClick={deposit}
-            className="rounded bg-slate-800 px-3 py-2 text-sm font-medium hover:bg-slate-700"
+            className="h-10 rounded bg-slate-800 px-4 text-sm font-medium hover:bg-slate-700"
           >
             Add Deposit
           </button>
+        </div>
+        <div className="flex flex-col justify-center leading-tight">
+          <span className="text-xs text-slate-400">Max Sponsored (USD)</span>
+          <span className="font-mono text-lg font-semibold leading-6">
+            {formattedUsdLimit}
+          </span>
         </div>
       </div>
     </section>
@@ -271,97 +384,107 @@ function PaymasterCard({
 
 function AllowlistCard({
   contracts,
-  funcs,
   onChange,
   onSuccess,
   onError,
+  disabled,
 }: {
   contracts: ContractWL[];
-  funcs: FunctionWL[];
-  onChange: () => void;
+  onChange: () => Promise<void> | void;
+  disabled: boolean;
 } & FeedbackHandlers) {
   const { token } = useAuth();
   const [addr, setAddr] = useState("");
-  const [label, setLabel] = useState("");
-  const [selCsv, setSelCsv] = useState("");
-  const [selContractId, setSelContractId] = useState<number | "">("");
-  const [subsidyBps, setSubsidyBps] = useState(10000);
-  const [allow, setAllow] = useState(true);
+  const [name, setName] = useState("");
+  const [newFunctionsCsv, setNewFunctionsCsv] = useState("");
 
-  const { selectors, selectorError } = useMemo(() => {
-    if (!selCsv.trim()) return { selectors: [] as `0x${string}`[], selectorError: null as string | null };
-    try {
-      return { selectors: parseSelectorsList(selCsv), selectorError: null };
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "Invalid selector input";
-      return { selectors: [] as `0x${string}`[], selectorError: msg };
+  const contractAddressValid = useMemo(
+    () => (addr.trim() === "" ? false : isEthAddress(addr)),
+    [addr]
+  );
+
+  const {
+    selectors: newContractFunctions,
+    selectorError: newContractSelectorError,
+  } = useMemo(() => {
+    if (!newFunctionsCsv.trim()) {
+      return {
+        selectors: [] as SelectorEntry[],
+        selectorError: null as string | null,
+      };
     }
-  }, [selCsv]);
+    try {
+      return {
+        selectors: parseSelectorEntries(newFunctionsCsv),
+        selectorError: null,
+      };
+    } catch (error) {
+      const msg =
+        error instanceof Error ? error.message : "Invalid selector input";
+      return { selectors: [] as SelectorEntry[], selectorError: msg };
+    }
+  }, [newFunctionsCsv]);
 
-  const contractLookup = useMemo(() => {
-    const map = new Map<number, ContractWL>();
-    contracts.forEach((c) => map.set(c.id, c));
-    return map;
-  }, [contracts]);
+  const resetNewContractForm = () => {
+    setAddr("");
+    setName("");
+    setNewFunctionsCsv("");
+  };
 
   const addContract = async () => {
-    if (!token || !addr.trim()) return;
+    if (
+      !token ||
+      !addr.trim() ||
+      disabled ||
+      !contractAddressValid ||
+      newContractSelectorError
+    )
+      return;
     try {
-      await api.addContract(token, PM_ID, addr.trim(), label.trim() || undefined);
+      await api.addContract(token, {
+        address: addr.trim(),
+        name: name.trim() || undefined,
+        functions: newContractFunctions,
+      });
       onSuccess("Contract added to allowlist");
-      setAddr("");
-      setLabel("");
-      onChange();
+      resetNewContractForm();
+      await Promise.resolve(onChange());
     } catch (error) {
       onError(error);
     }
   };
 
   const delContract = async (id: number) => {
-    if (!token) return;
+    if (!token || disabled) return;
     try {
-      await api.deleteContract(token, PM_ID, id);
+      await api.deleteContract(token, id);
       onSuccess("Contract removed from allowlist");
-      if (selContractId === id) setSelContractId("");
-      onChange();
+      await Promise.resolve(onChange());
     } catch (error) {
       onError(error);
     }
   };
 
-  const addFunctions = async () => {
-    if (!token || !selContractId) {
-      onError(new Error("Select a target contract first"));
-      return;
-    }
-    if (selectorError) {
-      onError(new Error(selectorError));
-      return;
-    }
-    if (selectors.length === 0) {
-      onError(new Error("Enter at least one function signature or selector"));
-      return;
-    }
+  const editFunctions = async (contract: ContractWL) => {
+    if (!token || disabled) return;
+    const current = (contract.functions ?? [])
+      .map((fn) => fn.signature ?? fn.selector)
+      .join(", ");
+    const next =
+      window.prompt(
+        "Comma separated function signatures or selectors",
+        current
+      ) ?? undefined;
+    if (next === undefined) return;
+    const trimmed = next.trim();
     try {
-      await Promise.all(
-        selectors.map((selector) =>
-          api.addFunction(token, PM_ID, selContractId, selector, allow, subsidyBps),
-        ),
-      );
-      onSuccess(`Added ${selectors.length} function${selectors.length > 1 ? "s" : ""}`);
-      setSelCsv("");
-      onChange();
-    } catch (error) {
-      onError(error);
-    }
-  };
-
-  const delFunction = async (id: number) => {
-    if (!token) return;
-    try {
-      await api.deleteFunction(token, PM_ID, id);
-      onSuccess("Function removed from allowlist");
-      onChange();
+      const entries = trimmed ? parseSelectorEntries(trimmed) : [];
+      await api.updateContract(token, contract.id, {
+        name: contract.name ?? undefined,
+        functions: entries,
+      });
+      onSuccess("Contract functions updated");
+      await Promise.resolve(onChange());
     } catch (error) {
       onError(error);
     }
@@ -373,29 +496,65 @@ function AllowlistCard({
         <h3 className="font-semibold">Contract allowlist</h3>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,2.5fr)_minmax(0,1fr)]">
         <div>
-          <label className="mb-1 block text-sm text-slate-400">Contract Address</label>
+          <label className="mb-1 block text-sm text-slate-400">
+            Contract Address
+          </label>
           <input
-            className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono outline-none"
+            className={`h-11 w-full rounded border px-3 font-mono text-sm outline-none ${
+              contractAddressValid || addr.trim() === ""
+                ? "border-slate-700 bg-slate-900"
+                : "border-red-500/60 bg-red-500/10"
+            }`}
             value={addr}
             onChange={(e) => setAddr(e.target.value)}
             placeholder="0x..."
+            disabled={disabled}
           />
         </div>
         <div>
-          <label className="mb-1 block text-sm text-slate-400">Name (optional)</label>
+          <label className="mb-1 block text-sm text-slate-400">
+            Name (optional)
+          </label>
           <input
-            className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 outline-none"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="e.g. NFT Minter"
+            className="h-11 w-full rounded border border-slate-700 bg-slate-900 px-3 text-sm outline-none"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. NFT"
+            disabled={disabled}
           />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm text-slate-400">
+            Functions (optional, comma separated)
+          </label>
+          <input
+            className={`h-11 w-full rounded border px-3 font-mono text-sm outline-none ${
+              !newFunctionsCsv || !newContractSelectorError
+                ? "border-slate-700 bg-slate-900"
+                : "border-red-500/60 bg-red-500/10"
+            }`}
+            value={newFunctionsCsv}
+            onChange={(e) => setNewFunctionsCsv(e.target.value)}
+            placeholder="mint(),transfer(address,uint256)"
+            disabled={disabled}
+          />
+          {newContractSelectorError && (
+            <div className="mt-2 text-xs text-red-300">
+              {newContractSelectorError}
+            </div>
+          )}
         </div>
         <div className="flex items-end">
           <button
             onClick={addContract}
-            className="w-full rounded bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500"
+            className="h-11 w-full rounded bg-indigo-600 px-3 text-sm font-medium hover:bg-indigo-500 disabled:opacity-60"
+            disabled={
+              disabled ||
+              !contractAddressValid ||
+              Boolean(newContractSelectorError)
+            }
           >
             Add
           </button>
@@ -406,26 +565,67 @@ function AllowlistCard({
         <table className="w-full text-sm">
           <thead className="bg-slate-900/60 text-left text-xs uppercase tracking-wide text-slate-400">
             <tr>
-              <th className="p-3 font-medium">Name</th>
-              <th className="p-3 font-medium">Address</th>
-              <th className="p-3 font-medium">Actions</th>
+              <th className="px-3 py-2 font-medium w-[120px]">Name</th>
+              <th className="px-3 py-2 font-medium w-[360px]">Address</th>
+              <th className="px-3 py-2 font-medium">Functions</th>
             </tr>
           </thead>
           <tbody>
-            {contracts.map((contract) => (
-              <tr key={contract.id} className="border-t border-slate-800">
-                <td className="p-3">{contract.label || "-"}</td>
-                <td className="p-3 font-mono">{contract.address}</td>
-                <td className="p-3">
-                  <button
-                    onClick={() => delContract(contract.id)}
-                    className="rounded bg-red-900/40 px-3 py-1.5 text-xs font-medium text-red-200 hover:bg-red-900/60"
+            {contracts.map((contract) => {
+              const functions = contract.functions ?? [];
+              return (
+                <tr key={contract.id} className="border-t border-slate-800">
+                  <td
+                    className="px-3 py-2 align-top max-w-[120px] truncate"
+                    title={contract.name ?? "-"}
                   >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
+                    {contract.name || "-"}
+                  </td>
+                  <td
+                    className="px-3 py-2 font-mono align-top max-w-[360px] truncate"
+                    title={contract.address}
+                  >
+                    {contract.address}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        {functions.length > 0 ? (
+                          functions.map((fn) => (
+                            <span
+                              key={`${contract.id}-${fn.selector}`}
+                              className="rounded bg-slate-800 px-2 py-1 font-mono text-xs text-slate-200"
+                            >
+                              {fn.signature ?? fn.selector}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-xs text-slate-500">
+                            No functions
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <button
+                          onClick={() => editFunctions(contract)}
+                          className="rounded border border-slate-700 px-3 py-1.5 text-xs font-medium hover:bg-slate-800 disabled:opacity-60"
+                          disabled={disabled}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => delContract(contract.id)}
+                          className="rounded bg-red-900/40 px-3 py-1.5 text-xs font-medium text-red-200 hover:bg-red-900/60 disabled:opacity-60"
+                          disabled={disabled}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
             {contracts.length === 0 && (
               <tr>
                 <td colSpan={3} className="p-3 text-slate-400">
@@ -436,135 +636,40 @@ function AllowlistCard({
           </tbody>
         </table>
       </div>
-
-      <div className="grid gap-3 md:grid-cols-3">
-        <div>
-          <label className="mb-1 block text-sm text-slate-400">Target Contract</label>
-          <select
-            className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 outline-none"
-            value={selContractId}
-            onChange={(e) => setSelContractId(e.target.value ? Number(e.target.value) : "")}
-          >
-            <option value="">Select contract</option>
-            {contracts.map((contract) => (
-              <option key={contract.id} value={contract.id}>
-                {contract.label || `${contract.address.slice(0, 10)}…`}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="md:col-span-2">
-          <label className="mb-1 block text-sm text-slate-400">Functions (comma or newline separated)</label>
-          <textarea
-            className="h-24 w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono outline-none"
-            value={selCsv}
-            onChange={(e) => setSelCsv(e.target.value)}
-            placeholder="mint()\nmintTo(address,uint256)\n0x449a52f8"
-          />
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400">
-            {selectors.length > 0 && (
-              <span>
-                Preview selectors:
-                <span className="ml-2 inline-flex flex-wrap gap-2">
-                  {selectors.map((selector) => (
-                    <span key={selector} className="rounded bg-slate-800 px-2 py-1 font-mono text-slate-200">
-                      {selector}
-                    </span>
-                  ))}
-                </span>
-              </span>
-            )}
-            {selectorError && <span className="text-red-300">{selectorError}</span>}
-            <label className="ml-auto inline-flex items-center gap-2">
-              <input type="checkbox" checked={allow} onChange={(e) => setAllow(e.target.checked)} />
-              Allow
-            </label>
-            <label className="inline-flex items-center gap-2">
-              Subsidy Bps
-              <input
-                type="number"
-                className="w-24 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-right outline-none"
-                value={subsidyBps}
-                onChange={(e) => setSubsidyBps(Number(e.target.value))}
-              />
-            </label>
-            <button
-              onClick={addFunctions}
-              className="ml-auto rounded bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500"
-            >
-              Add Functions
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="overflow-hidden rounded-lg border border-slate-800 bg-[#0f1422]">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-900/60 text-left text-xs uppercase tracking-wide text-slate-400">
-            <tr>
-              <th className="p-3 font-medium">Contract</th>
-              <th className="p-3 font-medium">Selector</th>
-              <th className="p-3 font-medium">Allow</th>
-              <th className="p-3 font-medium">Subsidy (bps)</th>
-              <th className="p-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {funcs.map((fn) => {
-              const contract = contractLookup.get(fn.contractId);
-              return (
-                <tr key={fn.id} className="border-t border-slate-800">
-                  <td className="p-3">
-                    {contract?.label || contract?.address || "-"}
-                  </td>
-                  <td className="p-3 font-mono">{fn.selector}</td>
-                  <td className="p-3">{fn.allow ? "Allow" : "Block"}</td>
-                  <td className="p-3">{fn.subsidyBps}</td>
-                  <td className="p-3">
-                    <button
-                      onClick={() => delFunction(fn.id)}
-                      className="rounded bg-red-900/40 px-3 py-1.5 text-xs font-medium text-red-200 hover:bg-red-900/60"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-            {funcs.length === 0 && (
-              <tr>
-                <td colSpan={5} className="p-3 text-slate-400">
-                  No functions
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
     </section>
   );
 }
-
 function GasPolicyCard({
   pm,
   onSaved,
   onSuccess,
   onError,
+  disabled,
 }: {
-  pm: Paymaster | null;
+  pm: PaymasterResponse | null;
   onSaved: () => void;
+  disabled: boolean;
 } & FeedbackHandlers) {
   const { token } = useAuth();
-  const [usd, setUsd] = useState<number>(pm?.usdcMaxPerOpUSD ?? 0);
+  const [usd, setUsd] = useState<number>(
+    pm?.usdPerMaxOp ?? pm?.usdcMaxPerOpUSD ?? 0
+  );
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => setUsd(pm?.usdcMaxPerOpUSD ?? 0), [pm?.usdcMaxPerOpUSD]);
+  const isUsdValid = useMemo(() => Number.isFinite(usd) && usd >= 0, [usd]);
+
+  useEffect(() => {
+    setUsd(pm?.usdPerMaxOp ?? pm?.usdcMaxPerOpUSD ?? 0);
+  }, [pm?.usdPerMaxOp, pm?.usdcMaxPerOpUSD]);
 
   const save = async () => {
-    if (!token || !pm) return;
+    if (!token || disabled || !isUsdValid) return;
     setSaving(true);
     try {
-      await api.updatePaymaster(token, pm.id, { usdcMaxPerOpUSD: usd });
+      await api.updatePaymaster(token, {
+        address: pm?.address,
+        usdPerMaxOp: usd,
+      });
       onSuccess("Gas policy updated");
       onSaved();
     } catch (error) {
@@ -577,25 +682,34 @@ function GasPolicyCard({
   return (
     <section className="space-y-4 rounded-xl border border-slate-800 bg-[#151A28] p-4">
       <h3 className="font-semibold">Gas policy</h3>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
         <div>
-          <div className="mb-1 text-sm text-slate-400">Max sponsored per operation (USDC)</div>
+          <div className="mb-1 text-sm text-slate-400">
+            Max sponsored per operation (USD)
+          </div>
           <input
             type="number"
-            className="w-40 rounded border border-slate-700 bg-slate-900 px-3 py-2 outline-none"
+            className={`w-40 rounded border px-3 py-2 outline-none ${
+              isUsdValid
+                ? "border-slate-700 bg-slate-900"
+                : "border-red-500/60 bg-red-500/10"
+            }`}
             value={usd}
             onChange={(e) => setUsd(Number(e.target.value))}
+            disabled={disabled}
           />
         </div>
         <button
           onClick={save}
-          disabled={saving}
-          className="rounded bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500 disabled:opacity-60"
+          disabled={saving || disabled || !isUsdValid}
+          className="h-10 rounded bg-indigo-600 px-4 text-sm font-medium hover:bg-indigo-500 disabled:opacity-60"
         >
           {saving ? "Saving…" : "Save"}
         </button>
       </div>
-      <p className="text-xs text-slate-400">* Conversion follows backend oracle logic (e.g. Chainlink).</p>
+      <p className="text-xs text-slate-400">
+        * Conversion follows backend oracle logic (e.g. Chainlink).
+      </p>
     </section>
   );
 }
@@ -605,17 +719,29 @@ function UserWhitelistCard({
   onChange,
   onSuccess,
   onError,
+  disabled,
 }: {
-  users: UserWL[];
+  users: string[];
   onChange: () => void;
+  disabled: boolean;
 } & FeedbackHandlers) {
   const { token } = useAuth();
   const [sender, setSender] = useState("");
+  const senderValid = useMemo(
+    () => (sender.trim() === "" ? false : isEthAddress(sender)),
+    [sender]
+  );
 
   const add = async () => {
-    if (!token || !sender.trim()) return;
+    if (!token || !sender.trim() || disabled || !senderValid) return;
     try {
-      await api.addUser(token, PM_ID, sender.trim());
+      const trimmed = sender.trim();
+      const lower = trimmed.toLowerCase();
+      if (users.some((value) => value.toLowerCase() === lower)) {
+        onError(new Error("Address already whitelisted"));
+        return;
+      }
+      await api.addUser(token, trimmed);
       onSuccess("User added to sponsor whitelist");
       setSender("");
       onChange();
@@ -624,10 +750,11 @@ function UserWhitelistCard({
     }
   };
 
-  const del = async (id: number) => {
-    if (!token) return;
+  const remove = async (target: string) => {
+    if (!token || disabled) return;
     try {
-      await api.deleteUser(token, PM_ID, id);
+      const normalized = target.trim();
+      await api.deleteUser(token, normalized);
       onSuccess("User removed from sponsor whitelist");
       onChange();
     } catch (error) {
@@ -639,16 +766,21 @@ function UserWhitelistCard({
     <section className="space-y-4 rounded-xl border border-slate-800 bg-[#151A28] p-4">
       <h3 className="font-semibold">Allowed users</h3>
 
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2 max-w-xl">
         <input
-          className="flex-1 rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono outline-none"
-          placeholder="0xSender..."
+          className={`flex-1 rounded border px-3 py-2 font-mono outline-none ${
+            senderValid || sender.trim() === ""
+              ? "border-slate-700 bg-slate-900"
+              : "border-red-500/60 bg-red-500/10"
+          }`}
+          placeholder="0x..."
           value={sender}
           onChange={(e) => setSender(e.target.value)}
         />
         <button
           onClick={add}
-          className="rounded bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500"
+          className="rounded bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500 disabled:opacity-60"
+          disabled={disabled || !senderValid}
         >
           Add
         </button>
@@ -658,29 +790,29 @@ function UserWhitelistCard({
         <table className="w-full text-sm">
           <thead className="bg-slate-900/60 text-left text-xs uppercase tracking-wide text-slate-400">
             <tr>
-              <th className="p-3 font-medium">Sender</th>
-              <th className="p-3 font-medium">Actions</th>
+              <th className="p-3 font-medium">Account</th>
             </tr>
           </thead>
           <tbody>
             {users.map((user) => (
-              <tr key={user.id} className="border-t border-slate-800">
-                <td className="p-3 font-mono">{user.sender}</td>
-                <td className="p-3">
-                  <button
-                    onClick={() => del(user.id)}
-                    className="rounded bg-red-900/40 px-3 py-1.5 text-xs font-medium text-red-200 hover:bg-red-900/60"
-                  >
-                    Remove
-                  </button>
+              <tr key={user} className="border-t border-slate-800">
+                <td className="p-3 font-mono max-w-[280px]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate">{user}</span>
+                    <button
+                      onClick={() => remove(user)}
+                      className="rounded bg-red-900/40 px-2 py-1 text-[11px] font-medium text-red-200 hover:bg-red-900/60 disabled:opacity-60"
+                      disabled={disabled}
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
             {users.length === 0 && (
               <tr>
-                <td colSpan={2} className="p-3 text-slate-400">
-                  No users
-                </td>
+                <td className="p-3 text-slate-400">No users</td>
               </tr>
             )}
           </tbody>
