@@ -105,6 +105,7 @@ export type PaymasterRpcRequest = {
   entryPoint: `0x${string}`;
   context: PaymasterContextRequest;
   userOperation?: PaymasterUserOperationOverrides;
+  token?: string | null;
 };
 
 export type PaymasterStubResponse = {
@@ -112,6 +113,9 @@ export type PaymasterStubResponse = {
   paymasterData: `0x${string}`;
   paymasterVerificationGasLimit?: string;
   paymasterPostOpGasLimit?: string;
+  callGasLimit?: string;
+  preVerificationGas?: string;
+  verificationGasLimit?: string;
   sponsor?: { name: string; icon?: string };
   isFinal?: boolean;
 };
@@ -153,7 +157,7 @@ function buildUserOperation(overrides?: PaymasterUserOperationOverrides) {
 }
 
 export async function requestPaymasterStubData(request: PaymasterRpcRequest): Promise<PaymasterStubResponse> {
-  const client = getPaymasterClient();
+  const client = getPaymasterClient(request.token);
   const result = await client.getPaymasterStubData({
     ...(buildUserOperation(request.userOperation) as any),
     chainId: request.chainId,
@@ -164,7 +168,7 @@ export async function requestPaymasterStubData(request: PaymasterRpcRequest): Pr
 }
 
 export async function requestPaymasterData(request: PaymasterRpcRequest): Promise<PaymasterDataResponse> {
-  const client = getPaymasterClient();
+  const client = getPaymasterClient(request.token);
   const result = await client.getPaymasterData({
     ...(buildUserOperation(request.userOperation) as any),
     chainId: request.chainId,

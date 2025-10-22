@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import PageHeader from "../components/layout/PageHeader";
 import { toSelector } from "../lib/selectors";
-import { getBundlerClient, getPublicClient, getWalletClient } from "../lib/viem";
+import {
+  ENTRYPOINT_ABI,
+  getBundlerClient,
+  getPublicClient,
+  getWalletClient,
+} from "../lib/viem";
 import { ApiError, api, type PaymasterResponse } from "../lib/api";
 import { useAuth } from "../state/auth";
 import { isEthAddress } from "../lib/address";
+import { encodeFunctionData, hexToBigInt, toHex } from "viem";
+import {
+  getUserOperationHash,
+  type UserOperation,
+} from "viem/account-abstraction";
 
 type ContractArtifact = {
   abi: any;
@@ -25,6 +35,41 @@ type StoredState = {
 };
 
 const PLAYGROUND_STORAGE_KEY = "sentra.playground.state";
+type UserOperationDraft = {
+  sender: `0x${string}`;
+  nonce: bigint;
+  factory?: `0x${string}`;
+  factoryData?: `0x${string}`;
+  callData: `0x${string}`;
+  callGasLimit: bigint;
+  verificationGasLimit: bigint;
+  preVerificationGas: bigint;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+  paymaster?: `0x${string}`;
+  paymasterData?: `0x${string}`;
+  paymasterVerificationGasLimit?: bigint;
+  paymasterPostOpGasLimit?: bigint;
+  signature?: `0x${string}`;
+};
+
+type RpcUserOperation = {
+  sender: `0x${string}`;
+  nonce: `0x${string}`;
+  factory?: `0x${string}`;
+  factoryData?: `0x${string}`;
+  callData: `0x${string}`;
+  callGasLimit: `0x${string}`;
+  verificationGasLimit: `0x${string}`;
+  preVerificationGas: `0x${string}`;
+  maxFeePerGas: `0x${string}`;
+  maxPriorityFeePerGas: `0x${string}`;
+  paymaster?: `0x${string}`;
+  paymasterData?: `0x${string}`;
+  paymasterVerificationGasLimit?: `0x${string}`;
+  paymasterPostOpGasLimit?: `0x${string}`;
+  signature: `0x${string}`;
+};
 
 function loadStoredState(): StoredState {
   if (typeof window === "undefined") return {};
@@ -76,7 +121,143 @@ function mergeStoredState(
 }
 
 const ARTIFACT_NAME = "MintableNFT";
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+const GWEI = 1_000_000_000n;
+const DEFAULT_MAX_PRIORITY_FEE = 1n * GWEI;
+const DEFAULT_MAX_FEE = 30n * GWEI;
+const DEFAULT_CALL_GAS_LIMIT = 1_000_000n;
+const DEFAULT_PRE_VERIFICATION_GAS = 1_000_000n;
+const DEFAULT_VERIFICATION_GAS_LIMIT = 5_000_000n;
+const SAFE_MINT_ABI = [
+  {
+    type: "function",
+    name: "safeMint",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "tokenId", type: "uint256" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+const EXECUTE_ABI = [
+  {
+    type: "function",
+    name: "execute",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "target", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "data", type: "bytes" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+const ENTRYPOINT_SIM_ABI = [
+  {
+    type: "function",
+    name: "simulateValidation",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "userOp",
+        type: "tuple",
+        components: [
+          { name: "sender", type: "address" },
+          { name: "nonce", type: "uint256" },
+          { name: "initCode", type: "bytes" },
+          { name: "callData", type: "bytes" },
+          { name: "accountGasLimits", type: "bytes32" },
+          { name: "preVerificationGas", type: "uint256" },
+          { name: "gasFees", type: "bytes32" },
+          { name: "paymasterAndData", type: "bytes" },
+          { name: "signature", type: "bytes" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+] as const;
+
+const DUMMY_SIGNATURE =
+  "0xfffffffffffffffffffffffffffffff0000000000000000000000000000000007aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1c" as `0x${string}`;
+
+function packAccountGasLimits(
+  callGasLimit: bigint,
+  verificationGasLimit: bigint
+): `0x${string}` {
+  const packed =
+    (callGasLimit << 128n) | (verificationGasLimit & ((1n << 128n) - 1n));
+  return toHex(packed, { size: 32 }) as `0x${string}`;
+}
+
+function packGasFees(
+  maxFeePerGas: bigint,
+  maxPriorityFeePerGas: bigint
+): `0x${string}` {
+  const mask128 = (1n << 128n) - 1n;
+  const packed =
+    ((maxPriorityFeePerGas & mask128) << 128n) | (maxFeePerGas & mask128);
+  return toHex(packed, { size: 32 });
+}
+
+function pad16(value?: bigint): string {
+  return toHex(value ?? 0n, { size: 16 }).replace(/^0x/, "");
+}
+
+function buildPaymasterAndData(
+  paymaster?: `0x${string}` | undefined,
+  verificationGasLimit?: bigint,
+  postOpGasLimit?: bigint,
+  data?: `0x${string}` | undefined
+): `0x${string}` {
+  if (!paymaster) return "0x" as `0x${string}`;
+  const addr = paymaster.replace(/^0x/, "").padStart(40, "0");
+  const verGas = pad16(verificationGasLimit);
+  const postGas = pad16(postOpGasLimit);
+  const suffix = (data ?? "0x").replace(/^0x/, "");
+  return `0x${addr}${verGas}${postGas}${suffix}` as `0x${string}`;
+}
+
+function normalizeHex(value?: string): `0x${string}` | undefined {
+  if (!value) return undefined;
+  if (value.startsWith("0x")) return value as `0x${string}`;
+  return `0x${value}` as `0x${string}`;
+}
+
+// function buildInitCode(
+//   factory?: `0x${string}`,
+//   factoryData?: `0x${string}`
+// ): `0x${string}` {
+//   if (!factory) return "0x" as `0x${string}`;
+//   const suffix = (factoryData ?? "0x").replace(/^0x/, "");
+//   return `${factory}${suffix}` as `0x${string}`;
+// }
+
+// function formatUserOperationForRpc(op: UserOperationDraft): RpcUserOperation {
+//   return {
+//     sender: op.sender,
+//     nonce: toHex(op.nonce),
+//     factory: op.factory,
+//     factoryData: op.factoryData,
+//     callData: op.callData,
+//     callGasLimit: toHex(op.callGasLimit),
+//     verificationGasLimit: toHex(op.verificationGasLimit),
+//     preVerificationGas: toHex(op.preVerificationGas),
+//     maxFeePerGas: toHex(op.maxFeePerGas),
+//     maxPriorityFeePerGas: toHex(op.maxPriorityFeePerGas),
+//     paymaster: op.paymaster,
+//     paymasterData: op.paymasterData ?? ("0x" as `0x${string}`),
+//     paymasterVerificationGasLimit: op.paymasterVerificationGasLimit
+//       ? toHex(op.paymasterVerificationGasLimit)
+//       : undefined,
+//     paymasterPostOpGasLimit: op.paymasterPostOpGasLimit
+//       ? toHex(op.paymasterPostOpGasLimit)
+//       : undefined,
+//     signature: (op.signature ?? "0x") as `0x${string}`,
+//   };
+// }
 
 export default function Playground() {
   const [storedState, setStoredState] = useState<StoredState>(() =>
@@ -115,7 +296,10 @@ export default function Playground() {
         storedState={storedState}
         updateStoredState={updateStoredState}
       />
-      <MintSponsoredCard defaultTarget={lastDeploy?.address ?? ""} />
+      <MintSponsoredCard
+        defaultTarget={lastDeploy?.address ?? ""}
+        defaultSender={lastDeploy?.minter ?? ""}
+      />
     </div>
   );
 }
@@ -446,16 +630,22 @@ async function allowlistNewContract({
 
 type MintCardProps = {
   defaultTarget: `0x${string}` | "";
+  defaultSender?: `0x${string}` | "";
 };
 
-function MintSponsoredCard({ defaultTarget }: MintCardProps) {
+function MintSponsoredCard({
+  defaultTarget,
+  defaultSender = "",
+}: MintCardProps) {
   const { token } = useAuth();
   const [paymasterInfo, setPaymasterInfo] = useState<PaymasterResponse | null>(
     null
   );
   const [target, setTarget] = useState<`0x${string}` | "">(defaultTarget);
   const [recipient, setRecipient] = useState<`0x${string}` | "">("");
-  const [senderAddress, setSenderAddress] = useState<`0x${string}` | "">("");
+  const [senderAddress, setSenderAddress] = useState<`0x${string}` | "">(
+    defaultSender
+  );
   const [tokenId, setTokenId] = useState<string>("");
   const [status, setStatus] = useState("");
 
@@ -464,6 +654,12 @@ function MintSponsoredCard({ defaultTarget }: MintCardProps) {
       setTarget(defaultTarget);
     }
   }, [defaultTarget]);
+
+  useEffect(() => {
+    if (defaultSender) {
+      setSenderAddress(defaultSender);
+    }
+  }, [defaultSender]);
 
   useEffect(() => {
     if (!token) {
@@ -498,7 +694,7 @@ function MintSponsoredCard({ defaultTarget }: MintCardProps) {
         const addrs = await wallet.getAddresses();
         if (addrs?.[0]) {
           const addr = addrs[0] as `0x${string}`;
-          setSenderAddress(addr);
+          setSenderAddress((prev) => prev || addr);
           setRecipient((prev) => prev || addr);
         }
       } catch {
@@ -531,8 +727,14 @@ function MintSponsoredCard({ defaultTarget }: MintCardProps) {
       setStatus("failed: paymaster 정보를 먼저 등록하세요.");
       return;
     }
+    if (!isEthAddress(senderAddress)) {
+      setStatus("failed: sender(minter) 주소를 확인하세요.");
+      return;
+    }
+    const sender = senderAddress as `0x${string}`;
     const entryPoint = paymasterInfo.entryPoint as `0x${string}`;
-    const chainId = Number(paymasterInfo.chainId ?? 0);
+    const configuredPaymaster = normalizeHex(paymasterInfo.address);
+    const chainId = paymasterInfo.chainId ?? 0;
     if (!Number.isFinite(chainId) || chainId <= 0) {
       setStatus("failed: 유효한 체인 ID를 찾을 수 없습니다.");
       return;
@@ -541,59 +743,287 @@ function MintSponsoredCard({ defaultTarget }: MintCardProps) {
     setStatus("requesting paymaster…");
     try {
       const selector = toSelector("safeMint(address,uint256)");
-      const fn = "safeMint";
-      const args: [string, string] = [recipient, tokenIdValue.toString()];
-      const sender = (senderAddress ||
-        recipient ||
-        ZERO_ADDRESS) as `0x${string}`;
 
-      await api.getPaymasterStub({
+      const publicClient = getPublicClient();
+      const nonce = (await publicClient.readContract({
+        address: entryPoint,
+        abi: ENTRYPOINT_ABI,
+        functionName: "getNonce",
+        args: [sender, 0n],
+      })) as bigint;
+
+      const safeMintData = encodeFunctionData({
+        abi: SAFE_MINT_ABI,
+        functionName: "safeMint",
+        args: [recipient as `0x${string}`, tokenIdValue],
+      });
+
+      const callData = encodeFunctionData({
+        abi: EXECUTE_ABI,
+        functionName: "execute",
+        args: [target as `0x${string}`, 0n, safeMintData],
+      });
+
+      const stub = await api.getPaymasterStub({
         chainId,
         entryPoint,
         userOperation: {
           sender,
-          nonce: 0n,
+          nonce,
+          callData,
           maxFeePerGas: 0n,
           maxPriorityFeePerGas: 0n,
         },
         context: {
           target,
           selector,
-          args,
         },
+        token,
       });
+
+      const parseGas = (value?: string | bigint) => {
+        if (typeof value === "bigint") return value;
+        if (typeof value === "string" && value) {
+          try {
+            const hex = value.startsWith("0x")
+              ? (value as `0x${string}`)
+              : (`0x${value}` as `0x${string}`);
+            return hexToBigInt(hex);
+          } catch {
+            return 0n;
+          }
+        }
+        return 0n;
+      };
+
+      // const bundler = getBundlerClient(chainId);
+
+      const maxFeePerGas = DEFAULT_MAX_FEE;
+      const maxPriorityFeePerGas = DEFAULT_MAX_PRIORITY_FEE;
+
+      const stubPaymaster = {
+        paymaster: normalizeHex(stub.paymaster) ?? configuredPaymaster,
+        paymasterData:
+          normalizeHex(stub.paymasterData) ?? ("0x" as `0x${string}`),
+        paymasterVerificationGasLimit: parseGas(
+          stub.paymasterVerificationGasLimit
+        ),
+        paymasterPostOpGasLimit: parseGas(stub.paymasterPostOpGasLimit),
+      };
+
+      let callGasLimit = DEFAULT_CALL_GAS_LIMIT;
+      let preVerificationGas = DEFAULT_PRE_VERIFICATION_GAS;
+      let verificationGasLimit = DEFAULT_VERIFICATION_GAS_LIMIT;
+
+      const tenderlyRpc =
+        import.meta.env.VITE_TENDERLY_RPC_URL ?? import.meta.env.VITE_RPC_URL;
+      if (tenderlyRpc) {
+        try {
+          const blockNumber = await publicClient.getBlockNumber();
+          const blockTag = toHex(blockNumber) as `0x${string}`;
+          const accountGasLimitsPacked = packAccountGasLimits(
+            callGasLimit,
+            verificationGasLimit
+          );
+          const gasFeesPacked = packGasFees(maxFeePerGas, maxPriorityFeePerGas);
+          const paymasterAndDataPacked = buildPaymasterAndData(
+            stubPaymaster.paymaster,
+            stubPaymaster.paymasterVerificationGasLimit,
+            stubPaymaster.paymasterPostOpGasLimit,
+            stubPaymaster.paymasterData
+          );
+          // const op = {
+          //   sender,
+          //   nonce: 0,
+          //   initCode: "0x",
+          //   callData,
+          //   accountGasLimits: accountGasLimitsPacked,
+          //   preVerificationGas: 100000,
+          //   gasFees: gasFeesPacked,
+          //   paymasterAndData: paymasterAndDataPacked,
+          //   signature: DUMMY_SIGNATURE,
+          // };
+          // console.log(JSON.stringify(op));
+          const simulationCalldata = encodeFunctionData({
+            abi: ENTRYPOINT_SIM_ABI,
+            functionName: "simulateValidation",
+            args: [
+              {
+                sender,
+                nonce,
+                initCode: "0x",
+                callData,
+                accountGasLimits: accountGasLimitsPacked,
+                preVerificationGas,
+                gasFees: gasFeesPacked,
+                paymasterAndData: paymasterAndDataPacked,
+                signature: DUMMY_SIGNATURE,
+              },
+            ],
+          });
+
+          const simulationPayload = {
+            id: Date.now(),
+            jsonrpc: "2.0",
+            method: "tenderly_simulateTransaction",
+            params: [
+              {
+                from: sender,
+                to: entryPoint,
+                gas: "0x7a1200",
+                gasPrice: "0x0",
+                value: "0x0",
+                data: simulationCalldata,
+              },
+              blockTag,
+            ],
+          };
+
+          const simRes = await fetch(tenderlyRpc, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(simulationPayload),
+          });
+          const simJson = await simRes.json().catch(() => ({}));
+
+          if (!simRes.ok || simJson?.error) {
+            const reason =
+              simJson?.error?.message ??
+              simJson?.error ??
+              (await simRes.text().catch(() => "")) ??
+              "simulation failed";
+            setStatus(`validation failed: ${reason}`);
+            return;
+          }
+        } catch (error: any) {
+          setStatus(
+            `validation failed: ${
+              error?.shortMessage ?? error?.message ?? String(error)
+            }`
+          );
+          return;
+        }
+      }
+
+      // gas estimation currently skipped due to packer/guardian requirements.
 
       const paymasterData = await api.getPaymasterData({
         chainId,
         entryPoint,
         userOperation: {
           sender,
-          nonce: 0n,
-          maxFeePerGas: 0n,
-          maxPriorityFeePerGas: 0n,
+          nonce,
+          callData,
+          callGasLimit,
+          preVerificationGas,
+          verificationGasLimit,
+          maxFeePerGas,
+          maxPriorityFeePerGas,
         },
         context: {
           target,
           selector,
-          args,
         },
+        token,
       });
 
-      const bundler = getBundlerClient(chainId);
-      const userOp = {
-        sender,
-        callData: "0x",
-        target,
-        functionName: fn,
-        args,
-        paymaster: paymasterData,
-      } as any;
-      const txHash = await bundler.sendUserOperation(userOp);
-      const userOpHash = txHash;
+      // if (paymasterData.paymasterVerificationGasLimit) {
+      //   verificationGasLimit = parseGas(
+      //     paymasterData.paymasterVerificationGasLimit
+      //   );
+      // }
+      // if (paymasterData.paymasterPostOpGasLimit) {
+      //   preVerificationGas = parseGas(paymasterData.paymasterPostOpGasLimit);
+      // }
 
-      setStatus(
-        `submitted ✅\nuserOpHash: ${userOpHash}\ntx: ${txHash ?? "-"}`
-      );
+      const finalPaymaster = {
+        paymaster:
+          normalizeHex(paymasterData.paymaster) ??
+          stubPaymaster.paymaster ??
+          configuredPaymaster,
+        paymasterData:
+          normalizeHex(paymasterData.paymasterData) ??
+          stubPaymaster.paymasterData ??
+          ("0x" as `0x${string}`),
+        paymasterVerificationGasLimit:
+          parseGas(paymasterData.paymasterVerificationGasLimit) ??
+          stubPaymaster.paymasterVerificationGasLimit,
+        paymasterPostOpGasLimit:
+          parseGas(paymasterData.paymasterPostOpGasLimit) ??
+          stubPaymaster.paymasterPostOpGasLimit,
+      };
+
+      const finalUserOp: UserOperation<"0.8"> = {
+        sender,
+        nonce,
+        callData: callData as `0x${string}`,
+        callGasLimit,
+        preVerificationGas,
+        verificationGasLimit,
+        maxFeePerGas,
+        maxPriorityFeePerGas,
+        paymaster: finalPaymaster.paymaster,
+        paymasterData: finalPaymaster.paymasterData,
+        paymasterVerificationGasLimit:
+          finalPaymaster.paymasterVerificationGasLimit,
+        paymasterPostOpGasLimit: finalPaymaster.paymasterPostOpGasLimit,
+        signature: "0x" as `0x${string}`,
+      };
+
+      const userOpHash = getUserOperationHash({
+        chainId,
+        entryPointAddress: entryPoint,
+        entryPointVersion: "0.8",
+        userOperation: finalUserOp,
+      });
+      console.log("userop hash", userOpHash);
+      const wallet = getWalletClient();
+      let account = (await wallet.getAddresses())[0];
+      if (!account && wallet.requestAddresses) {
+        const requested = await wallet.requestAddresses();
+        account = requested?.[0];
+      }
+      const signature = await wallet.signMessage({
+        account,
+        message: { raw: userOpHash },
+      });
+      console.log("updated");
+      // finalUserOp.signature = signature as `0x${string}`;
+      // const userOpRpc = formatUserOperationForRpc(finalUserOp);
+
+      const packedUserOp = {
+        sender: finalUserOp.sender,
+        nonce: toHex(finalUserOp.nonce),
+        initCode: "0x",
+        callData: finalUserOp.callData,
+        accountGasLimits: packAccountGasLimits(
+          finalUserOp.callGasLimit,
+          finalUserOp.verificationGasLimit
+        ),
+        preVerificationGas: toHex(finalUserOp.preVerificationGas),
+        gasFees: packGasFees(
+          finalUserOp.maxFeePerGas,
+          finalUserOp.maxPriorityFeePerGas
+        ),
+        paymasterAndData: buildPaymasterAndData(
+          finalUserOp.paymaster,
+          finalUserOp.paymasterVerificationGasLimit,
+          finalUserOp.paymasterPostOpGasLimit,
+          finalUserOp.paymasterData
+        ),
+        signature,
+      };
+
+      console.log("sig temp:", signature);
+      console.log(JSON.stringify(packedUserOp));
+      // const txHash = await bundler.request({
+      //   method: "eth_sendUserOperation",
+      //   params: [userOpRpc, entryPoint],
+      // });
+
+      // setStatus(
+      //   `submitted ✅\nuserOpHash: ${userOpHash}\ntx: ${txHash ?? "-"}`
+      // );
     } catch (error: any) {
       setStatus(`failed: ${error?.message ?? String(error)}`);
     }
@@ -603,6 +1033,15 @@ function MintSponsoredCard({ defaultTarget }: MintCardProps) {
     <section className="space-y-4 rounded-xl border border-slate-800 bg-[#151A28] p-4">
       <h3 className="font-semibold">Mint (sponsored)</h3>
       <div className="grid gap-3 md:grid-cols-3">
+        <div className="md:col-span-3">
+          <div className="mb-1 text-sm text-slate-400">Sender (Minter)</div>
+          <input
+            className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono"
+            placeholder="0xMinter..."
+            value={senderAddress}
+            onChange={(event) => setSenderAddress(event.target.value as any)}
+          />
+        </div>
         <div className="md:col-span-2">
           <div className="mb-1 text-sm text-slate-400">Target (ERC-721)</div>
           <input

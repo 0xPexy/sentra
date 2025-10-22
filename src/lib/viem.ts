@@ -16,6 +16,16 @@ export const ENTRYPOINT_ABI = [
     inputs: [{ name: "account", type: "address" }],
     outputs: [{ name: "", type: "uint256" }],
   },
+  {
+    type: "function",
+    name: "getNonce",
+    stateMutability: "view",
+    inputs: [
+      { name: "sender", type: "address" },
+      { name: "key", type: "uint192" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
 ] as const;
 
 export function parseEthAmountToValue(eth: string) {
@@ -65,18 +75,27 @@ export async function fetchPaymasterDeposit(entryPoint: `0x${string}`, account: 
   });
 }
 
-let cachedPaymasterClient: ReturnType<typeof createPaymasterClient> | null = null;
+const paymasterClients = new Map<string, ReturnType<typeof createPaymasterClient>>();
 let cachedBundlerClient: ReturnType<typeof createBundlerClient> | null = null;
 
-export function getPaymasterClient() {
-  if (!cachedPaymasterClient) {
-    const apiBase = import.meta.env.VITE_API_URL?.replace(/\/+$/, "") ?? "";
-    const endpoint = apiBase ? `${apiBase}/api/erc7677` : "/api/erc7677";
-    cachedPaymasterClient = createPaymasterClient({
-      transport: http(endpoint),
-    });
+export function getPaymasterClient(token?: string | null) {
+  const apiBase = import.meta.env.VITE_API_URL?.replace(/\/+$/, "") ?? "";
+  const endpoint = apiBase ? `${apiBase}/api/v1/erc7677` : "/api/v1/erc7677";
+  const key = token ?? "__anon__";
+  if (!paymasterClients.has(key)) {
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (import.meta.env.VITE_DEV_TOKEN) {
+      headers["sentra-dev-token"] = import.meta.env.VITE_DEV_TOKEN;
+    }
+    paymasterClients.set(
+      key,
+      createPaymasterClient({
+        transport: http(endpoint, { fetchOptions: { headers } }),
+      })
+    );
   }
-  return cachedPaymasterClient;
+  return paymasterClients.get(key)!;
 }
 
 function resolveChain(chainId?: number | string): Chain | undefined {
