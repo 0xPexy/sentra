@@ -30,7 +30,7 @@ export default function PageHeader({ title }: PageHeaderProps) {
       return;
     }
     try {
-      const wallet = getWalletClient();
+      const wallet = await getWalletClient();
       const addresses = await wallet.getAddresses();
       const primary = addresses[0];
       if (primary) {
@@ -80,7 +80,7 @@ export default function PageHeader({ title }: PageHeaderProps) {
 
   const connectWallet = useCallback(async () => {
     try {
-      const wallet = getWalletClient();
+      const wallet = await getWalletClient();
       if (wallet.requestAddresses) {
         await wallet.requestAddresses();
       } else {

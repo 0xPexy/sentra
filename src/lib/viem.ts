@@ -1,5 +1,6 @@
-import { type Chain, createPublicClient, createWalletClient, custom, http, parseEther, formatEther } from "viem";
+import { type Chain, createPublicClient, createWalletClient, custom, http, parseEther, formatEther, parseAbi } from "viem";
 import { createBundlerClient, createPaymasterClient } from "viem/account-abstraction";
+import { defineChain } from 'viem'
 
 export const ENTRYPOINT_ABI = [
   {
@@ -28,6 +29,22 @@ export const ENTRYPOINT_ABI = [
   },
 ] as const;
 
+export const tenderlyTestNet = defineChain({
+  id: 111222111,
+  name: 'Tenderly Testnet',
+  nativeCurrency: {
+    decimals: 18,
+    name: 'Ether',
+    symbol: 'ETH',
+  },
+  rpcUrls: {
+    default: {
+      http: [import.meta.env.VITE_RPC_URL],
+    },
+  },
+
+})
+
 export function parseEthAmountToValue(eth: string) {
   return parseEther(eth as `${number}`);
 }
@@ -38,10 +55,17 @@ export function formatWeiToEth(value: bigint) {
 
 let cachedHttpClient: ReturnType<typeof createPublicClient> | null = null;
 
+// type CustomRpcSchema = [{ 
+//   Method: 'tenderly_simulateTransaction', 
+//   Parameters: [string] 
+//   ReturnType: string
+// }] 
+
 export function getPublicClient() {
   const eth = (window as any).ethereum;
   if (eth) {
     return createPublicClient({
+      chain: tenderlyTestNet,
       transport: custom(eth),
     });
   }
@@ -52,16 +76,24 @@ export function getPublicClient() {
       throw new Error("VITE_RPC_URL must be defined when no wallet provider is available");
     }
     cachedHttpClient = createPublicClient({
+      chain: tenderlyTestNet,
       transport: http(rpcUrl),
     });
   }
   return cachedHttpClient;
 }
 
-export function getWalletClient() {
+export async function getWalletClient() {
   const eth = (window as any).ethereum;
   if (!eth) throw new Error("No wallet (window.ethereum) found");
+
+  const [address] = await eth.request({
+    method: 'eth_requestAccounts'
+  });
+  console.log("address requested", address)
   return createWalletClient({
+    chain: tenderlyTestNet,
+    account: address,
     transport: custom(eth),
   });
 }
@@ -127,3 +159,5 @@ export function getBundlerClient(chainId?: number) {
   }
   return cachedBundlerClient;
 }
+
+

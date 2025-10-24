@@ -10,7 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@metamask/delegation-toolkit": "^0.13.0",
     "@tailwindcss/vite": "^4.1.14",
+    "permissionless": "^0.2.57",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-router-dom": "^7.9.4",

@@ -28,8 +28,15 @@ export default function DashboardStats() {
             paymaster.entryPoint as `0x${string}`,
             paymaster.address as `0x${string}`,
           );
-          const eth = Number.parseFloat(formatWeiToEth(value));
-          setDeposit(Number.isNaN(eth) ? "-" : eth.toFixed(2));
+          const weiString = formatWeiToEth(value);
+          if (!weiString) {
+            setDeposit("-");
+          } else {
+            const [integer, rawFraction = ""] = weiString.split(".");
+            const fraction = rawFraction.padEnd(3, "0").slice(0, 3);
+            const trimmed = fraction.replace(/0+$/, "");
+            setDeposit(trimmed.length > 0 ? `${integer}.${trimmed}` : integer);
+          }
         } else {
           setDeposit("-");
         }

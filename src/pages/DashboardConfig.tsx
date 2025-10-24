@@ -203,9 +203,16 @@ function PaymasterCard({
 
   const formattedDeposit = useMemo(() => {
     if (depositWei === null) return "-";
-    const value = Number.parseFloat(formatWeiToEth(depositWei));
-    if (Number.isNaN(value)) return "-";
-    return value.toFixed(2);
+    try {
+      const weiString = formatWeiToEth(depositWei);
+      if (!weiString) return "-";
+      const [integer, rawFraction = ""] = weiString.split(".");
+      const fraction = rawFraction.padEnd(3, "0").slice(0, 3);
+      const trimmed = fraction.replace(/0+$/, "");
+      return trimmed.length > 0 ? `${integer}.${trimmed}` : integer;
+    } catch {
+      return "-";
+    }
   }, [depositWei]);
 
   const formattedUsdLimit = useMemo(() => {
@@ -356,26 +363,20 @@ function PaymasterCard({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-4">
+      <div>
+        <label className="mb-1 block text-sm text-slate-400">
+          Deposit (ETH)
+        </label>
         <div className="flex items-center gap-3">
-          <div className="flex flex-col justify-center leading-tight">
-            <span className="text-xs text-slate-400">Deposit (ETH)</span>
-            <span className="font-mono text-lg font-semibold leading-6">
-              {formattedDeposit}
-            </span>
-          </div>
+          <span className="font-mono text-lg font-semibold">
+            {formattedDeposit}
+          </span>
           <button
             onClick={deposit}
-            className="h-10 rounded bg-slate-800 px-4 text-sm font-medium hover:bg-slate-700"
+            className="h-9 rounded bg-slate-800 px-4 text-sm font-medium hover:bg-slate-700"
           >
             Add Deposit
           </button>
-        </div>
-        <div className="flex flex-col justify-center leading-tight">
-          <span className="text-xs text-slate-400">Max Sponsored (USD)</span>
-          <span className="font-mono text-lg font-semibold leading-6">
-            {formattedUsdLimit}
-          </span>
         </div>
       </div>
     </section>

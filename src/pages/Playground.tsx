@@ -22,7 +22,7 @@ import {
   toMetaMaskSmartAccount,
   getDeleGatorEnvironment,
 } from "@metamask/delegation-toolkit";
-
+import { toSimpleSmartAccount } from "permissionless/accounts";
 type ContractArtifact = {
   abi: any;
   bytecode: `0x${string}`;
@@ -392,7 +392,7 @@ function DeployERC721Card({
   useEffect(() => {
     (async () => {
       try {
-        const wallet = getWalletClient();
+        const wallet = await getWalletClient();
         const addresses = await wallet.getAddresses();
         if (addresses?.[0]) {
           const adminAddress = addresses[0] as `0x${string}`;
@@ -427,7 +427,7 @@ function DeployERC721Card({
     setSuccessInfo(null);
 
     try {
-      const wallet = getWalletClient();
+      const wallet = await getWalletClient();
       const [account] = await wallet.getAddresses();
       if (!account) throw new Error("지갑을 먼저 연결하세요");
       const adminAddress = defaultAdmin as `0x${string}`;
@@ -697,7 +697,7 @@ function MintSponsoredCard({
   useEffect(() => {
     (async () => {
       try {
-        const wallet = getWalletClient();
+        const wallet = await getWalletClient();
         const addrs = await wallet.getAddresses();
         if (addrs?.[0]) {
           const addr = addrs[0] as `0x${string}`;
@@ -739,8 +739,8 @@ function MintSponsoredCard({
       return;
     }
     const sender = senderAddress as `0x${string}`;
+
     const entryPoint = paymasterInfo.entryPoint as `0x${string}`;
-    const configuredPaymaster = normalizeHex(paymasterInfo.address);
     const chainId = paymasterInfo.chainId ?? 0;
     if (!Number.isFinite(chainId) || chainId <= 0) {
       setStatus("failed: 유효한 체인 ID를 찾을 수 없습니다.");
@@ -770,249 +770,79 @@ function MintSponsoredCard({
         functionName: "execute",
         args: [target as `0x${string}`, 0n, safeMintData],
       });
-      const maxFeePerGas = await publicClient.getGasPrice();
-      const maxPriorityFeePerGas = 1n;
-
-      const stub = await api.getPaymasterStub({
-        chainId,
-        entryPoint,
-        userOperation: {
-          sender,
-          nonce,
-          callData,
-          maxFeePerGas,
-          maxPriorityFeePerGas,
-        },
-        context: {
-          target,
-          selector,
-        },
-        token,
-      });
-      console.log("stub", stub);
-      const walletClient = await getWalletClient();
-      const smartAccount = await toMetaMaskSmartAccount({
-        client: publicClient,
-        implementation: Implementation.Hybrid,
-        signer: { walletClient },
-      });
-
-      return;
-      const parseGas = (value?: string | bigint) => {
-        if (typeof value === "bigint") return value;
-        if (typeof value === "string" && value) {
-          try {
-            const hex = value.startsWith("0x")
-              ? (value as `0x${string}`)
-              : (`0x${value}` as `0x${string}`);
-            return hexToBigInt(hex);
-          } catch {
-            return 0n;
-          }
-        }
-        return 0n;
-      };
-
-      // const bundler = getBundlerClient(chainId);
-
-      const stubPaymaster = {
-        paymaster: normalizeHex(stub.paymaster) ?? configuredPaymaster,
-        paymasterData:
-          normalizeHex(stub.paymasterData) ?? ("0x" as `0x${string}`),
-        paymasterVerificationGasLimit: parseGas(
-          stub.paymasterVerificationGasLimit
-        ),
-        paymasterPostOpGasLimit: parseGas(stub.paymasterPostOpGasLimit),
-      };
-
-      let callGasLimit = DEFAULT_CALL_GAS_LIMIT;
-      let preVerificationGas = DEFAULT_PRE_VERIFICATION_GAS;
-      let verificationGasLimit = DEFAULT_VERIFICATION_GAS_LIMIT;
-
-      const tenderlyRpc =
-        import.meta.env.VITE_TENDERLY_RPC_URL ?? import.meta.env.VITE_RPC_URL;
-      if (tenderlyRpc) {
-        try {
-          const blockNumber = await publicClient.getBlockNumber();
-          const blockTag = toHex(blockNumber) as `0x${string}`;
-          const accountGasLimitsPacked = packAccountGasLimits(
-            callGasLimit,
-            verificationGasLimit
-          );
-          const gasFeesPacked = packGasFees(maxFeePerGas, maxPriorityFeePerGas);
-          const paymasterAndDataPacked = buildPaymasterAndData(
-            stubPaymaster.paymaster,
-            stubPaymaster.paymasterVerificationGasLimit,
-            stubPaymaster.paymasterPostOpGasLimit,
-            stubPaymaster.paymasterData
-          );
-          // const op = {
-          //   sender,
-          //   nonce: 0,
-          //   initCode: "0x",
-          //   callData,
-          //   accountGasLimits: accountGasLimitsPacked,
-          //   preVerificationGas: 100000,
-          //   gasFees: gasFeesPacked,
-          //   paymasterAndData: paymasterAndDataPacked,
-          //   signature: DUMMY_SIGNATURE,
-          // };
-          // console.log(JSON.stringify(op));
-          const simulationCalldata = encodeFunctionData({
-            abi: ENTRYPOINT_SIM_ABI,
-            functionName: "simulateValidation",
-            args: [
-              {
-                sender,
-                nonce,
-                initCode: "0x",
-                callData,
-                accountGasLimits: accountGasLimitsPacked,
-                preVerificationGas,
-                gasFees: gasFeesPacked,
-                paymasterAndData: paymasterAndDataPacked,
-                signature: DUMMY_SIGNATURE,
-              },
-            ],
-          });
-
-          const simulationPayload = {
-            id: Date.now(),
-            jsonrpc: "2.0",
-            method: "tenderly_simulateTransaction",
-            params: [
-              {
-                from: sender,
-                to: entryPoint,
-                gas: "0x7a1200",
-                gasPrice: "0x0",
-                value: "0x0",
-                data: simulationCalldata,
-              },
-              blockTag,
-            ],
-          };
-
-          const simRes = await fetch(tenderlyRpc, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(simulationPayload),
-          });
-          const simJson = await simRes.json().catch(() => ({}));
-
-          if (!simRes.ok || simJson?.error) {
-            const reason =
-              simJson?.error?.message ??
-              simJson?.error ??
-              (await simRes.text().catch(() => "")) ??
-              "simulation failed";
-            setStatus(`validation failed: ${reason}`);
-            return;
-          }
-        } catch (error: any) {
-          setStatus(
-            `validation failed: ${
-              error?.shortMessage ?? error?.message ?? String(error)
-            }`
-          );
-          return;
-        }
-      }
-
-      // gas estimation currently skipped due to packer/guardian requirements.
-
-      const paymasterData = await api.getPaymasterData({
-        chainId,
-        entryPoint,
-        userOperation: {
-          sender,
-          nonce,
-          callData,
-          callGasLimit,
-          preVerificationGas,
-          verificationGasLimit,
-          maxFeePerGas,
-          maxPriorityFeePerGas,
-        },
-        context: {
-          target,
-          selector,
-        },
-        token,
-      });
-
-      // if (paymasterData.paymasterVerificationGasLimit) {
-      //   verificationGasLimit = parseGas(
-      //     paymasterData.paymasterVerificationGasLimit
-      //   );
-      // }
-      // if (paymasterData.paymasterPostOpGasLimit) {
-      //   preVerificationGas = parseGas(paymasterData.paymasterPostOpGasLimit);
-      // }
-
-      const finalPaymaster = {
-        paymaster:
-          normalizeHex(paymasterData.paymaster) ??
-          stubPaymaster.paymaster ??
-          configuredPaymaster,
-        paymasterData:
-          normalizeHex(paymasterData.paymasterData) ??
-          stubPaymaster.paymasterData ??
-          ("0x" as `0x${string}`),
-        paymasterVerificationGasLimit:
-          parseGas(paymasterData.paymasterVerificationGasLimit) ??
-          stubPaymaster.paymasterVerificationGasLimit,
-        paymasterPostOpGasLimit:
-          parseGas(paymasterData.paymasterPostOpGasLimit) ??
-          stubPaymaster.paymasterPostOpGasLimit,
-      };
-
-      const finalUserOp: UserOperation<"0.8"> = {
+      const maxFeePerGas = DEFAULT_MAX_FEE;
+      const maxPriorityFeePerGas = DEFAULT_MAX_PRIORITY_FEE;
+      console.log("sender", sender);
+      const userOperation: UserOperation = {
         sender,
         nonce,
-        callData: callData as `0x${string}`,
-        callGasLimit,
-        preVerificationGas,
-        verificationGasLimit,
+        callData,
+        callGasLimit: DEFAULT_CALL_GAS_LIMIT,
+        preVerificationGas: DEFAULT_PRE_VERIFICATION_GAS,
+        verificationGasLimit: DEFAULT_VERIFICATION_GAS_LIMIT,
         maxFeePerGas,
         maxPriorityFeePerGas,
-        paymaster: finalPaymaster.paymaster,
-        paymasterData: finalPaymaster.paymasterData,
-        paymasterVerificationGasLimit:
-          finalPaymaster.paymasterVerificationGasLimit,
-        paymasterPostOpGasLimit: finalPaymaster.paymasterPostOpGasLimit,
+        signature: "0x",
+      };
+      console.log(userOperation);
+
+      const pmStub = await api.getPaymasterStub({
+        chainId,
+        entryPoint,
+        userOperation,
+        context: {
+          target,
+          selector,
+        },
+        token,
+      });
+      console.log("pmStub", pmStub);
+
+      userOperation.paymaster = pmStub.paymaster;
+      userOperation.paymasterData = pmStub.paymasterData;
+      userOperation.paymasterVerificationGasLimit =
+        pmStub.paymasterVerificationGasLimit;
+      userOperation.paymasterPostOpGasLimit = pmStub.paymasterPostOpGasLimit;
+
+      const pmData = await api.getPaymasterData({
+        chainId,
+        entryPoint,
+        userOperation,
+        context: {
+          target,
+          selector,
+        },
+        token,
+      });
+
+      userOperation.paymaster = pmData.paymaster;
+      userOperation.paymasterData = pmData.paymasterData;
+      userOperation.paymasterVerificationGasLimit =
+        pmData.paymasterVerificationGasLimit;
+      userOperation.paymasterPostOpGasLimit = pmData.paymasterPostOpGasLimit;
+
+      const packedUserOperation = {
+        sender: userOperation.sender,
+        nonce: userOperation.nonce,
+        initCode: "0x" as `0x${string}`,
+        callData: userOperation.callData,
+        accountGasLimits: packAccountGasLimits(
+          userOperation.callGasLimit,
+          userOperation.verificationGasLimit
+        ),
+        preVerificationGas: userOperation.preVerificationGas,
+        gasFees: packGasFees(
+          userOperation.maxFeePerGas,
+          userOperation.maxPriorityFeePerGas
+        ),
+        paymasterAndData: buildPaymasterAndData(
+          userOperation.paymaster,
+          userOperation.paymasterVerificationGasLimit,
+          userOperation.paymasterPostOpGasLimit,
+          userOperation.paymasterData
+        ),
         signature: "0x" as `0x${string}`,
       };
-      const t = {
-        ...finalUserOp,
-        nonce: toHex(finalUserOp.nonce),
-
-        callGasLimit: toHex(finalUserOp.callGasLimit),
-        preVerificationGas: toHex(finalUserOp.preVerificationGas),
-        verificationGasLimit: toHex(finalUserOp.verificationGasLimit),
-        maxFeePerGas: toHex(finalUserOp.maxFeePerGas),
-        maxPriorityFeePerGas: toHex(finalUserOp.maxPriorityFeePerGas),
-        paymasterVerificationGasLimit: toHex(
-          finalUserOp.paymasterVerificationGasLimit
-        ),
-        paymasterPostOpGasLimit: toHex(finalUserOp.paymasterPostOpGasLimit),
-      };
-      console.log("op", JSON.stringify(t));
-
-      const userOpHash = getUserOperationHash({
-        chainId,
-        entryPointAddress: entryPoint,
-        entryPointVersion: "0.8",
-        userOperation: finalUserOp,
-      });
-      console.log("userop hash", userOpHash);
-      const wallet = getWalletClient();
-      let account = (await wallet.getAddresses())[0];
-      if (!account && wallet.requestAddresses) {
-        const requested = await wallet.requestAddresses();
-        account = requested?.[0];
-      }
-
       const domain = {
         name: "ERC4337",
         version: "1",
@@ -1033,109 +863,49 @@ function MintSponsoredCard({
         ],
       } as const;
 
-      const signature = await wallet.signMessage({
-        account,
-        message: { raw: userOpHash },
-      });
-      console.log("updated");
-      // finalUserOp.signature = signature as `0x${string}`;
-      // const userOpRpc = formatUserOperationForRpc(finalUserOp);
-
-      const packedUserOp = {
-        sender: finalUserOp.sender,
-        nonce: toHex(finalUserOp.nonce),
-        initCode: "0x",
-        callData: finalUserOp.callData,
-        accountGasLimits: packAccountGasLimits(
-          finalUserOp.callGasLimit,
-          finalUserOp.verificationGasLimit
-        ),
-        preVerificationGas: toHex(finalUserOp.preVerificationGas),
-        gasFees: packGasFees(
-          finalUserOp.maxFeePerGas,
-          finalUserOp.maxPriorityFeePerGas
-        ),
-        paymasterAndData: buildPaymasterAndData(
-          finalUserOp.paymaster,
-          finalUserOp.paymasterVerificationGasLimit,
-          finalUserOp.paymasterPostOpGasLimit,
-          finalUserOp.paymasterData
-        ),
-        signature: "0x",
-      };
-      const packedUserOp2 = {
-        sender: finalUserOp.sender,
-        nonce: finalUserOp.nonce,
-        initCode: "0x",
-        callData: finalUserOp.callData,
-        accountGasLimits: packAccountGasLimits(
-          finalUserOp.callGasLimit,
-          finalUserOp.verificationGasLimit
-        ),
-        preVerificationGas: finalUserOp.preVerificationGas,
-        gasFees: packGasFees(
-          finalUserOp.maxFeePerGas,
-          finalUserOp.maxPriorityFeePerGas
-        ),
-        paymasterAndData: buildPaymasterAndData(
-          finalUserOp.paymaster,
-          finalUserOp.paymasterVerificationGasLimit,
-          finalUserOp.paymasterPostOpGasLimit,
-          finalUserOp.paymasterData
-        ),
-        signature: "0x",
-      };
-      packedUserOp2.signature = await wallet.signTypedData({
+      const walletClient = await getWalletClient();
+      const [account] = await walletClient.getAddresses();
+      const signature = await walletClient.signTypedData({
         account,
         domain,
         types,
         primaryType: "PackedUserOperation",
         message: {
-          sender: packedUserOp2.sender,
-          nonce: packedUserOp2.nonce,
+          sender: packedUserOperation.sender,
+          nonce: packedUserOperation.nonce,
           initCode: "0x" as `0x${string}`,
-          callData: packedUserOp2.callData,
-          accountGasLimits: packedUserOp2.accountGasLimits,
-          preVerificationGas: packedUserOp2.preVerificationGas,
-          gasFees: packedUserOp2.gasFees,
-          paymasterAndData: packedUserOp2.paymasterAndData,
+          callData: packedUserOperation.callData,
+          accountGasLimits: packedUserOperation.accountGasLimits,
+          preVerificationGas: packedUserOperation.preVerificationGas,
+          gasFees: packedUserOperation.gasFees,
+          paymasterAndData: packedUserOperation.paymasterAndData,
         },
       });
 
-      console.log("sig temp:", signature);
-      console.log("sig :", packedUserOp2.signature);
-      console.log(JSON.stringify(packedUserOp));
-      const ops = [packedUserOp2];
+      packedUserOperation.signature = (signature ?? "0x") as `0x${string}`;
+
+      const userOpHash = getUserOperationHash({
+        chainId,
+        entryPointAddress: entryPoint,
+        entryPointVersion: "0.8",
+        userOperation: userOperation,
+      });
       const entryPointAbi = parseAbi([
         "function handleOps((address sender,uint256 nonce,bytes initCode,bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData,bytes signature)[] ops,address beneficiary) external",
         "function getUserOpHash((address sender,uint256 nonce,bytes initCode,bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData,bytes signature) userOp) external view returns (bytes32)",
       ]);
-
-      await wallet.writeContract({
+      const beneficiary = account;
+      const txHash = await walletClient.writeContract({
+        account,
         address: entryPoint,
         abi: entryPointAbi,
         functionName: "handleOps",
-        args: [ops, account],
-        chain: null,
-        account,
+        args: [[packedUserOperation], beneficiary],
       });
 
-      // const beneficiary =
-      //   "0x0000000000000000000000000000000000000000" as `0x${string}`; // TODO: 실제 beneficiary 주소로 대체하세요.
-      // const txHash = await wallet.writeContract({
-      //   address: entryPoint,
-      //   abi: ENTRYPOINT_ABI, // 임포트된 ENTRYPOINT_ABI를 사용합니다.
-      //   functionName: "handleOps",
-      //   args: [[packedUserOp2], beneficiary], // packedUserOp2는 viem의 writeContract에 적합합니다.
-      // });
-      // const txHash = await bundler.request({
-      //   method: "eth_sendUserOperation",
-      //   params: [userOpRpc, entryPoint],
-      // });
-
-      // setStatus(
-      //   `submitted ✅\nuserOpHash: ${userOpHash}\ntx: ${txHash ?? "-"}`
-      // );
+      setStatus(
+        `submitted ✅\nuserOpHash: ${userOpHash}\ntx: ${txHash ?? "-"}`
+      );
     } catch (error: any) {
       setStatus(`failed: ${error?.message ?? String(error)}`);
     }

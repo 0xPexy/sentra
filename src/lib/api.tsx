@@ -13,7 +13,11 @@ export class ApiError extends Error {
   }
 }
 
-async function req<T>(path: string, opts: RequestInit = {}, token?: string | null): Promise<T> {
+async function req<T>(
+  path: string,
+  opts: RequestInit = {},
+  token?: string | null
+): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: {
       "content-type": "application/json",
@@ -37,7 +41,10 @@ async function req<T>(path: string, opts: RequestInit = {}, token?: string | nul
   try {
     return (await res.json()) as T;
   } catch (error) {
-    throw new ApiError(res.status, `Failed to parse response JSON: ${(error as Error).message}`);
+    throw new ApiError(
+      res.status,
+      `Failed to parse response JSON: ${(error as Error).message}`
+    );
   }
 }
 
@@ -156,7 +163,7 @@ function buildUserOperation(overrides?: PaymasterUserOperationOverrides) {
   return base;
 }
 
-export async function requestPaymasterStubData(request: PaymasterRpcRequest): Promise<PaymasterStubResponse> {
+export async function requestPaymasterStubData(request: PaymasterRpcRequest) {
   const client = getPaymasterClient(request.token);
   const result = await client.getPaymasterStubData({
     ...(buildUserOperation(request.userOperation) as any),
@@ -164,10 +171,10 @@ export async function requestPaymasterStubData(request: PaymasterRpcRequest): Pr
     entryPointAddress: request.entryPoint,
     context: request.context ?? {},
   });
-  return normalizePaymasterResult(result) as PaymasterStubResponse;
+  return result;
 }
 
-export async function requestPaymasterData(request: PaymasterRpcRequest): Promise<PaymasterDataResponse> {
+export async function requestPaymasterData(request: PaymasterRpcRequest) {
   const client = getPaymasterClient(request.token);
   const result = await client.getPaymasterData({
     ...(buildUserOperation(request.userOperation) as any),
@@ -175,7 +182,7 @@ export async function requestPaymasterData(request: PaymasterRpcRequest): Promis
     entryPointAddress: request.entryPoint,
     context: request.context ?? {},
   });
-  return normalizePaymasterResult(result) as PaymasterDataResponse;
+  return result;
 }
 
 function normalizePaymasterResult(result: any) {
@@ -185,7 +192,9 @@ function normalizePaymasterResult(result: any) {
     copy.paymasterPostOpGasLimit = toHex(copy.paymasterPostOpGasLimit);
   }
   if (typeof copy.paymasterVerificationGasLimit === "bigint") {
-    copy.paymasterVerificationGasLimit = toHex(copy.paymasterVerificationGasLimit);
+    copy.paymasterVerificationGasLimit = toHex(
+      copy.paymasterVerificationGasLimit
+    );
   }
   return copy;
 }
@@ -198,44 +207,91 @@ export type ContractArtifactResponse = {
 
 export const api = {
   login: (username: string, password: string) =>
-    req<{ token: string }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
+    req<{ token: string }>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
 
   // paymaster overview
   createPaymaster: (token: string, payload: Partial<Paymaster>) =>
-    req("/api/v1/paymasters", { method: "POST", body: JSON.stringify(payload) }, token),
-  getPaymaster: (token: string) => req<PaymasterResponse>("/api/v1/paymasters/me", {}, token),
-  updatePaymaster: (token: string, patch: Partial<Paymaster>, method: "POST" | "PATCH" = "PATCH") =>
-    req("/api/v1/paymasters/me", { method, body: JSON.stringify(patch) }, token),
-  getStats: (token: string) => req<any>("/api/v1/paymasters/me/operations", {}, token),
+    req(
+      "/api/v1/paymasters",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
+  getPaymaster: (token: string) =>
+    req<PaymasterResponse>("/api/v1/paymasters/me", {}, token),
+  updatePaymaster: (
+    token: string,
+    patch: Partial<Paymaster>,
+    method: "POST" | "PATCH" = "PATCH"
+  ) =>
+    req(
+      "/api/v1/paymasters/me",
+      { method, body: JSON.stringify(patch) },
+      token
+    ),
+  getStats: (token: string) =>
+    req<any>("/api/v1/paymasters/me/operations", {}, token),
 
   // contracts
   getContractArtifact: (token: string | null | undefined, name: string) =>
-    req<ContractArtifactResponse>(`/api/v1/contracts/${encodeURIComponent(name)}`, {}, token ?? undefined),
-  listContracts: (token: string) => req<ContractWL[]>("/api/v1/paymasters/me/contracts", {}, token),
+    req<ContractArtifactResponse>(
+      `/api/v1/contracts/${encodeURIComponent(name)}`,
+      {},
+      token ?? undefined
+    ),
+  listContracts: (token: string) =>
+    req<ContractWL[]>("/api/v1/paymasters/me/contracts", {}, token),
   addContract: (
     token: string,
-    payload: { address: string; name?: string; functions?: Array<{ selector: string; signature?: string }> }
+    payload: {
+      address: string;
+      name?: string;
+      functions?: Array<{ selector: string; signature?: string }>;
+    }
   ) =>
-    req<ContractWL>("/api/v1/paymasters/me/contracts", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }, token),
+    req<ContractWL>(
+      "/api/v1/paymasters/me/contracts",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      token
+    ),
   updateContract: (
     token: string,
     contractId: number,
-    payload: { address?: string; name?: string | null; functions?: Array<{ selector: string; signature?: string }> }
+    payload: {
+      address?: string;
+      name?: string | null;
+      functions?: Array<{ selector: string; signature?: string }>;
+    }
   ) =>
-    req<ContractWL>(`/api/v1/paymasters/me/contracts/${contractId}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    }, token),
+    req<ContractWL>(
+      `/api/v1/paymasters/me/contracts/${contractId}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      },
+      token
+    ),
   deleteContract: (token: string, contractId: number) =>
-    req(`/api/v1/paymasters/me/contracts/${contractId}`, { method: "DELETE" }, token),
+    req(
+      `/api/v1/paymasters/me/contracts/${contractId}`,
+      { method: "DELETE" },
+      token
+    ),
 
   // users whitelist
-  listUsers: (token: string) => req<UserWL[]>("/api/v1/paymasters/me/users", {}, token),
+  listUsers: (token: string) =>
+    req<UserWL[]>("/api/v1/paymasters/me/users", {}, token),
   addUser: (token: string, address: string) =>
-    req("/api/v1/paymasters/me/users", { method: "POST", body: JSON.stringify({ address }) }, token),
+    req(
+      "/api/v1/paymasters/me/users",
+      { method: "POST", body: JSON.stringify({ address }) },
+      token
+    ),
   deleteUser: (token: string, address: string) =>
     req(`/api/v1/paymasters/me/users/${address}`, { method: "DELETE" }, token),
 
