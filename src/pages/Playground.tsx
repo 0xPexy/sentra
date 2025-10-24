@@ -6,15 +6,22 @@ import {
   getBundlerClient,
   getPublicClient,
   getWalletClient,
+  tenderlyTestNet,
 } from "../lib/viem";
 import { ApiError, api, type PaymasterResponse } from "../lib/api";
 import { useAuth } from "../state/auth";
 import { isEthAddress } from "../lib/address";
-import { encodeFunctionData, hexToBigInt, toHex } from "viem";
+import { encodeFunctionData, hexToBigInt, toHex, parseAbi } from "viem";
 import {
   getUserOperationHash,
   type UserOperation,
 } from "viem/account-abstraction";
+
+import {
+  Implementation,
+  toMetaMaskSmartAccount,
+  getDeleGatorEnvironment,
+} from "@metamask/delegation-toolkit";
 
 type ContractArtifact = {
   abi: any;
@@ -188,7 +195,7 @@ function packAccountGasLimits(
   verificationGasLimit: bigint
 ): `0x${string}` {
   const packed =
-    (callGasLimit << 128n) | (verificationGasLimit & ((1n << 128n) - 1n));
+    (verificationGasLimit << 128n) | (callGasLimit & ((1n << 128n) - 1n));
   return toHex(packed, { size: 32 }) as `0x${string}`;
 }
 
@@ -763,6 +770,8 @@ function MintSponsoredCard({
         functionName: "execute",
         args: [target as `0x${string}`, 0n, safeMintData],
       });
+      const maxFeePerGas = await publicClient.getGasPrice();
+      const maxPriorityFeePerGas = 1n;
 
       const stub = await api.getPaymasterStub({
         chainId,
@@ -771,8 +780,8 @@ function MintSponsoredCard({
           sender,
           nonce,
           callData,
-          maxFeePerGas: 0n,
-          maxPriorityFeePerGas: 0n,
+          maxFeePerGas,
+          maxPriorityFeePerGas,
         },
         context: {
           target,
@@ -780,7 +789,15 @@ function MintSponsoredCard({
         },
         token,
       });
+      console.log("stub", stub);
+      const walletClient = await getWalletClient();
+      const smartAccount = await toMetaMaskSmartAccount({
+        client: publicClient,
+        implementation: Implementation.Hybrid,
+        signer: { walletClient },
+      });
 
+      return;
       const parseGas = (value?: string | bigint) => {
         if (typeof value === "bigint") return value;
         if (typeof value === "string" && value) {
@@ -797,9 +814,6 @@ function MintSponsoredCard({
       };
 
       // const bundler = getBundlerClient(chainId);
-
-      const maxFeePerGas = DEFAULT_MAX_FEE;
-      const maxPriorityFeePerGas = DEFAULT_MAX_PRIORITY_FEE;
 
       const stubPaymaster = {
         paymaster: normalizeHex(stub.paymaster) ?? configuredPaymaster,
@@ -969,6 +983,21 @@ function MintSponsoredCard({
         paymasterPostOpGasLimit: finalPaymaster.paymasterPostOpGasLimit,
         signature: "0x" as `0x${string}`,
       };
+      const t = {
+        ...finalUserOp,
+        nonce: toHex(finalUserOp.nonce),
+
+        callGasLimit: toHex(finalUserOp.callGasLimit),
+        preVerificationGas: toHex(finalUserOp.preVerificationGas),
+        verificationGasLimit: toHex(finalUserOp.verificationGasLimit),
+        maxFeePerGas: toHex(finalUserOp.maxFeePerGas),
+        maxPriorityFeePerGas: toHex(finalUserOp.maxPriorityFeePerGas),
+        paymasterVerificationGasLimit: toHex(
+          finalUserOp.paymasterVerificationGasLimit
+        ),
+        paymasterPostOpGasLimit: toHex(finalUserOp.paymasterPostOpGasLimit),
+      };
+      console.log("op", JSON.stringify(t));
 
       const userOpHash = getUserOperationHash({
         chainId,
@@ -983,6 +1012,27 @@ function MintSponsoredCard({
         const requested = await wallet.requestAddresses();
         account = requested?.[0];
       }
+
+      const domain = {
+        name: "ERC4337",
+        version: "1",
+        chainId, // 대상 체인 ID
+        verifyingContract: entryPoint, // v0.8 EntryPoint 주소
+      } as const;
+
+      const types = {
+        PackedUserOperation: [
+          { name: "sender", type: "address" },
+          { name: "nonce", type: "uint256" },
+          { name: "initCode", type: "bytes" },
+          { name: "callData", type: "bytes" },
+          { name: "accountGasLimits", type: "bytes32" },
+          { name: "preVerificationGas", type: "uint256" },
+          { name: "gasFees", type: "bytes32" },
+          { name: "paymasterAndData", type: "bytes" },
+        ],
+      } as const;
+
       const signature = await wallet.signMessage({
         account,
         message: { raw: userOpHash },
@@ -1011,11 +1061,73 @@ function MintSponsoredCard({
           finalUserOp.paymasterPostOpGasLimit,
           finalUserOp.paymasterData
         ),
-        signature,
+        signature: "0x",
       };
+      const packedUserOp2 = {
+        sender: finalUserOp.sender,
+        nonce: finalUserOp.nonce,
+        initCode: "0x",
+        callData: finalUserOp.callData,
+        accountGasLimits: packAccountGasLimits(
+          finalUserOp.callGasLimit,
+          finalUserOp.verificationGasLimit
+        ),
+        preVerificationGas: finalUserOp.preVerificationGas,
+        gasFees: packGasFees(
+          finalUserOp.maxFeePerGas,
+          finalUserOp.maxPriorityFeePerGas
+        ),
+        paymasterAndData: buildPaymasterAndData(
+          finalUserOp.paymaster,
+          finalUserOp.paymasterVerificationGasLimit,
+          finalUserOp.paymasterPostOpGasLimit,
+          finalUserOp.paymasterData
+        ),
+        signature: "0x",
+      };
+      packedUserOp2.signature = await wallet.signTypedData({
+        account,
+        domain,
+        types,
+        primaryType: "PackedUserOperation",
+        message: {
+          sender: packedUserOp2.sender,
+          nonce: packedUserOp2.nonce,
+          initCode: "0x" as `0x${string}`,
+          callData: packedUserOp2.callData,
+          accountGasLimits: packedUserOp2.accountGasLimits,
+          preVerificationGas: packedUserOp2.preVerificationGas,
+          gasFees: packedUserOp2.gasFees,
+          paymasterAndData: packedUserOp2.paymasterAndData,
+        },
+      });
 
       console.log("sig temp:", signature);
+      console.log("sig :", packedUserOp2.signature);
       console.log(JSON.stringify(packedUserOp));
+      const ops = [packedUserOp2];
+      const entryPointAbi = parseAbi([
+        "function handleOps((address sender,uint256 nonce,bytes initCode,bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData,bytes signature)[] ops,address beneficiary) external",
+        "function getUserOpHash((address sender,uint256 nonce,bytes initCode,bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData,bytes signature) userOp) external view returns (bytes32)",
+      ]);
+
+      await wallet.writeContract({
+        address: entryPoint,
+        abi: entryPointAbi,
+        functionName: "handleOps",
+        args: [ops, account],
+        chain: null,
+        account,
+      });
+
+      // const beneficiary =
+      //   "0x0000000000000000000000000000000000000000" as `0x${string}`; // TODO: 실제 beneficiary 주소로 대체하세요.
+      // const txHash = await wallet.writeContract({
+      //   address: entryPoint,
+      //   abi: ENTRYPOINT_ABI, // 임포트된 ENTRYPOINT_ABI를 사용합니다.
+      //   functionName: "handleOps",
+      //   args: [[packedUserOp2], beneficiary], // packedUserOp2는 viem의 writeContract에 적합합니다.
+      // });
       // const txHash = await bundler.request({
       //   method: "eth_sendUserOperation",
       //   params: [userOpRpc, entryPoint],
