@@ -161,32 +161,6 @@ const EXECUTE_ABI = [
   },
 ] as const;
 
-const ENTRYPOINT_SIM_ABI = [
-  {
-    type: "function",
-    name: "simulateValidation",
-    stateMutability: "nonpayable",
-    inputs: [
-      {
-        name: "userOp",
-        type: "tuple",
-        components: [
-          { name: "sender", type: "address" },
-          { name: "nonce", type: "uint256" },
-          { name: "initCode", type: "bytes" },
-          { name: "callData", type: "bytes" },
-          { name: "accountGasLimits", type: "bytes32" },
-          { name: "preVerificationGas", type: "uint256" },
-          { name: "gasFees", type: "bytes32" },
-          { name: "paymasterAndData", type: "bytes" },
-          { name: "signature", type: "bytes" },
-        ],
-      },
-    ],
-    outputs: [],
-  },
-] as const;
-
 const DUMMY_SIGNATURE =
   "0xfffffffffffffffffffffffffffffff0000000000000000000000000000000007aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1c" as `0x${string}`;
 
@@ -804,6 +778,14 @@ function MintSponsoredCard({
         pmStub.paymasterVerificationGasLimit;
       userOperation.paymasterPostOpGasLimit = pmStub.paymasterPostOpGasLimit;
 
+      // let bundlerUserOpHash: `0x${string}` | undefined;
+      // let bundlerClient: ReturnType<typeof getBundlerClient> | null = null;
+      // try {
+      //   bundlerClient = getBundlerClient(chainId);
+      // } catch (error) {
+      //   console.warn("failed to initialize bundler client", error);
+      // }
+
       const pmData = await api.getPaymasterData({
         chainId,
         entryPoint,
@@ -814,7 +796,7 @@ function MintSponsoredCard({
         },
         token,
       });
-
+      console.log("pmData", pmData);
       userOperation.paymaster = pmData.paymaster;
       userOperation.paymasterData = pmData.paymasterData;
       userOperation.paymasterVerificationGasLimit =
@@ -883,6 +865,7 @@ function MintSponsoredCard({
       });
 
       packedUserOperation.signature = (signature ?? "0x") as `0x${string}`;
+      userOperation.signature = packedUserOperation.signature;
 
       const userOpHash = getUserOperationHash({
         chainId,
@@ -890,11 +873,94 @@ function MintSponsoredCard({
         entryPointVersion: "0.8",
         userOperation: userOperation,
       });
+      console.log("userOpHash", userOpHash);
       const entryPointAbi = parseAbi([
         "function handleOps((address sender,uint256 nonce,bytes initCode,bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData,bytes signature)[] ops,address beneficiary) external",
         "function getUserOpHash((address sender,uint256 nonce,bytes initCode,bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData,bytes signature) userOp) external view returns (bytes32)",
       ]);
       const beneficiary = account;
+
+      const simulationCalldata = encodeFunctionData({
+        abi: entryPointAbi,
+        functionName: "handleOps",
+        args: [[packedUserOperation], beneficiary],
+      });
+
+      const time = `0x${Math.floor(Date.now() / 1000).toString(16)}`;
+      const simulationPayload = {
+        id: Date.now(),
+        jsonrpc: "2.0",
+        method: "tenderly_simulateTransaction",
+        params: [
+          {
+            from: account,
+            to: entryPoint,
+            gas: "0x7a1200",
+            gasPrice: "0x0",
+            value: "0x0",
+            data: simulationCalldata,
+          },
+          "latest",
+          {},
+          {
+            time: time,
+          },
+        ],
+      };
+      const tenderlyRpc = import.meta.env.VITE_RPC_URL;
+      console.log("running tenderly simulation", simulationPayload);
+      const simRes = await fetch(tenderlyRpc, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(simulationPayload),
+      });
+      const simJson = await simRes.json().catch(() => ({}));
+
+      const simulationStatus = simJson?.result?.status;
+      if (
+        !simRes.ok ||
+        simJson?.error ||
+        (typeof simulationStatus !== "undefined" && simulationStatus !== true)
+      ) {
+        const trace = simJson?.result?.trace?.[0];
+        const reason =
+          simJson?.error?.message ??
+          simJson?.error ??
+          trace?.errorReason ??
+          trace?.error ??
+          (await simRes.text().catch(() => "")) ??
+          "simulation failed";
+        setStatus(`validation failed: ${reason}`);
+        return;
+      }
+      console.log(simJson);
+
+      // if (bundlerClient) {
+      //   try {
+      //     bundlerUserOpHash = await bundlerClient.sendUserOperation({
+      //       entryPointAddress: entryPoint,
+      //       sender: userOperation.sender,
+      //       nonce: userOperation.nonce,
+      //       callData: userOperation.callData,
+      //       callGasLimit: userOperation.callGasLimit,
+      //       preVerificationGas: userOperation.preVerificationGas,
+      //       verificationGasLimit: userOperation.verificationGasLimit,
+      //       maxFeePerGas: userOperation.maxFeePerGas,
+      //       maxPriorityFeePerGas: userOperation.maxPriorityFeePerGas,
+      //       paymaster: userOperation.paymaster,
+      //       paymasterData: userOperation.paymasterData,
+      //       paymasterPostOpGasLimit: userOperation.paymasterPostOpGasLimit,
+      //       paymasterVerificationGasLimit:
+      //         userOperation.paymasterVerificationGasLimit,
+      //       signature: userOperation.signature,
+      //     });
+      //     console.log("bundlerUserOpHash", bundlerUserOpHash);
+      //   } catch (error) {
+      //     console.warn("bundler sendUserOperation failed", error);
+      //   }
+      // }
+
+      console.log("submitting");
       const txHash = await walletClient.writeContract({
         account,
         address: entryPoint,
@@ -902,10 +968,17 @@ function MintSponsoredCard({
         functionName: "handleOps",
         args: [[packedUserOperation], beneficiary],
       });
+      console.log("txHash", txHash);
 
-      setStatus(
-        `submitted ✅\nuserOpHash: ${userOpHash}\ntx: ${txHash ?? "-"}`
-      );
+      // const bundlerStatusLine = bundlerUserOpHash
+      //   ? `\nbundlerOp: ${bundlerUserOpHash}`
+      //   : "";
+      // setStatus(
+      //   `submitted ✅\nuserOpHash: ${userOpHash}${bundlerStatusLine}\ntx: ${
+      //     txHash ?? "-"
+      //   }`
+      // );
+      setStatus(`submitted ✅\ntx: ${txHash ?? "-"}`);
     } catch (error: any) {
       setStatus(`failed: ${error?.message ?? String(error)}`);
     }

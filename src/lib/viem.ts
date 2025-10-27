@@ -62,14 +62,6 @@ let cachedHttpClient: ReturnType<typeof createPublicClient> | null = null;
 // }] 
 
 export function getPublicClient() {
-  const eth = (window as any).ethereum;
-  if (eth) {
-    return createPublicClient({
-      chain: tenderlyTestNet,
-      transport: custom(eth),
-    });
-  }
-
   if (!cachedHttpClient) {
     const rpcUrl = import.meta.env.VITE_RPC_URL;
     if (!rpcUrl) {
@@ -87,15 +79,13 @@ export async function getWalletClient() {
   const eth = (window as any).ethereum;
   if (!eth) throw new Error("No wallet (window.ethereum) found");
 
-  const [address] = await eth.request({
-    method: 'eth_requestAccounts'
-  });
-  console.log("address requested", address)
-  return createWalletClient({
+  const walletClient = createWalletClient({
     chain: tenderlyTestNet,
-    account: address,
     transport: custom(eth),
   });
+  const addresses = await walletClient.requestAddresses();
+  console.log(addresses)
+  return walletClient;
 }
 
 export async function fetchPaymasterDeposit(entryPoint: `0x${string}`, account: `0x${string}`) {
