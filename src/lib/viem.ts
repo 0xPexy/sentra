@@ -1,7 +1,27 @@
-import { type Chain, createPublicClient, createWalletClient, custom, http, parseEther, formatEther, parseAbi } from "viem";
-import { createBundlerClient, createPaymasterClient } from "viem/account-abstraction";
-import { defineChain } from 'viem'
+import {
+  type Account,
+  type Chain,
+  createPublicClient,
+  createWalletClient,
+  custom,
+  http,
+  parseEther,
+  formatEther,
+  parseAbi,
+  type PublicClient,
+  type Transport,
+  type WalletClient,
+} from "viem";
+import {
+  entryPoint08Address,
+  createBundlerClient,
+  createPaymasterClient,
+  type SmartAccount,
+  type BundlerClient,
+} from "viem/account-abstraction";
+import { defineChain } from "viem";
 
+import { toSimpleSmartAccount } from "permissionless/accounts";
 export const ENTRYPOINT_ABI = [
   {
     type: "function",
@@ -31,19 +51,18 @@ export const ENTRYPOINT_ABI = [
 
 export const tenderlyTestNet = defineChain({
   id: 111222111,
-  name: 'Tenderly Testnet',
+  name: "Tenderly Testnet",
   nativeCurrency: {
     decimals: 18,
-    name: 'Ether',
-    symbol: 'ETH',
+    name: "Ether",
+    symbol: "ETH",
   },
   rpcUrls: {
     default: {
       http: [import.meta.env.VITE_RPC_URL],
     },
   },
-
-})
+});
 
 export function parseEthAmountToValue(eth: string) {
   return parseEther(eth as `${number}`);
@@ -55,17 +74,14 @@ export function formatWeiToEth(value: bigint) {
 
 let cachedHttpClient: ReturnType<typeof createPublicClient> | null = null;
 
-// type CustomRpcSchema = [{ 
-//   Method: 'tenderly_simulateTransaction', 
-//   Parameters: [string] 
-//   ReturnType: string
-// }] 
 
 export function getPublicClient() {
   if (!cachedHttpClient) {
     const rpcUrl = import.meta.env.VITE_RPC_URL;
     if (!rpcUrl) {
-      throw new Error("VITE_RPC_URL must be defined when no wallet provider is available");
+      throw new Error(
+        "VITE_RPC_URL must be defined when no wallet provider is available"
+      );
     }
     cachedHttpClient = createPublicClient({
       chain: tenderlyTestNet,
@@ -79,16 +95,24 @@ export async function getWalletClient() {
   const eth = (window as any).ethereum;
   if (!eth) throw new Error("No wallet (window.ethereum) found");
 
-  const walletClient = createWalletClient({
+  const [address] = await eth.request({
+    method: "eth_requestAccounts",
+  });
+  if (!address) {
+    throw new Error("Wallet did not return an address");
+  }
+
+  return createWalletClient({
+    account: address,
     chain: tenderlyTestNet,
     transport: custom(eth),
   });
-  const addresses = await walletClient.requestAddresses();
-  console.log(addresses)
-  return walletClient;
 }
 
-export async function fetchPaymasterDeposit(entryPoint: `0x${string}`, account: `0x${string}`) {
+export async function fetchPaymasterDeposit(
+  entryPoint: `0x${string}`,
+  account: `0x${string}`
+) {
   return getPublicClient().readContract({
     address: entryPoint,
     abi: ENTRYPOINT_ABI,
@@ -97,7 +121,10 @@ export async function fetchPaymasterDeposit(entryPoint: `0x${string}`, account: 
   });
 }
 
-const paymasterClients = new Map<string, ReturnType<typeof createPaymasterClient>>();
+const paymasterClients = new Map<
+  string,
+  ReturnType<typeof createPaymasterClient>
+>();
 let cachedBundlerClient: ReturnType<typeof createBundlerClient> | null = null;
 
 export function getPaymasterClient(token?: string | null) {
@@ -108,7 +135,7 @@ export function getPaymasterClient(token?: string | null) {
     const headers: Record<string, string> = {};
     if (token) headers.Authorization = `Bearer ${token}`;
     if (import.meta.env.VITE_DEV_TOKEN) {
-      headers["sentra-dev-token"] = import.meta.env.VITE_DEV_TOKEN;
+      headers.Authorization = `Bearer ${import.meta.env.VITE_DEV_TOKEN}`;
     }
     paymasterClients.set(
       key,
@@ -150,4 +177,36 @@ export function getBundlerClient(chainId?: number) {
   return cachedBundlerClient;
 }
 
+export async function getSimpleSmartAccount(
+  address: `0x${string}`,
+  publicClient: PublicClient,
+  walletClient: WalletClient<Transport, Chain | undefined, Account>,
+  factoryAddress: `0x${string}`,
+  salt: bigint = 0n
+) {
+  const account = await toSimpleSmartAccount({
+    owner: walletClient,
+    client: publicClient,
+    entryPoint: { address: entryPoint08Address, version: "0.8" },
+    factoryAddress,
+    index: salt
+  });
+  const resolvedAddress = (await account.getAddress()).toLowerCase();
+  if (resolvedAddress !== address.toLowerCase()) {
+    throw new Error(
+      `Derived smart account address ${resolvedAddress} mismatches expected ${address.toLowerCase()}`
+    );
+  }
+  return account;
+}
+
+
+export function getBundlerClientBySimpleAccount(account: SmartAccount) {
+  const bundlerUrl = import.meta.env.VITE_BUNDLER_URL;
+  const client = createBundlerClient({
+    account,
+    transport: http(bundlerUrl),
+  })
+  return client;
+}
 

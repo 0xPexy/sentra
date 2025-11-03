@@ -137,6 +137,10 @@ export type PaymasterDataResponse = {
 
 const ZERO_ADDRESS = zeroAddress as `0x${string}`;
 
+type ContractAddressResponse = {
+  address: `0x${string}`;
+};
+
 function buildUserOperation(overrides?: PaymasterUserOperationOverrides) {
   const base: Record<string, unknown> = {
     sender: overrides?.sender ?? ZERO_ADDRESS,
@@ -205,6 +209,43 @@ export type ContractArtifactResponse = {
   bytecode: string;
 };
 
+function buildQuery(params?: Record<string, unknown>) {
+  if (!params) return "";
+  const entries = Object.entries(params).filter(
+    ([, value]) => value !== undefined && value !== null
+  );
+  if (entries.length === 0) return "";
+  const query = entries
+    .map(([key, value]) =>
+      `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`
+    )
+    .join("&");
+  return query ? `?${query}` : "";
+}
+
+export type StatsOverviewResponse = {
+  avgActualGasUsed: number;
+  successRate: number;
+  totalSponsoredGasCost: string;
+  totalSponsoredOps: number;
+};
+
+export type PaymasterOpItem = {
+  userOpHash: `0x${string}`;
+  sender: `0x${string}`;
+  target: `0x${string}`;
+  selector: `0x${string}`;
+  status: "success" | "failed";
+  blockNumber: number;
+  logIndex: number;
+  blockTime: string;
+};
+
+export type PaymasterOpsResponse = {
+  items: PaymasterOpItem[];
+  nextCursor?: string | null;
+};
+
 export const api = {
   login: (username: string, password: string) =>
     req<{ token: string }>("/auth/login", {
@@ -233,6 +274,33 @@ export const api = {
     ),
   getStats: (token: string) =>
     req<any>("/api/v1/paymasters/me/operations", {}, token),
+  getStatsOverview: (token: string) =>
+    req<StatsOverviewResponse>("/api/v1/stats/overview", {}, token),
+  getPaymasterOps: (
+    token: string,
+    address: `0x${string}`,
+    params?: { chainId?: number; limit?: number; cursor?: string }
+  ) =>
+    req<PaymasterOpsResponse>(
+      `/api/v1/paymasters/${address}/ops${buildQuery(params)}`,
+      {},
+      token
+    ),
+  getEntryPointAddress: (token?: string | null) =>
+    req<ContractAddressResponse>(
+      `/api/v1/addresses?contract=entry_point`,
+      {},
+      token ?? undefined
+    ),
+  getContractAddress: (
+    contract: string,
+    token?: string | null
+  ) =>
+    req<ContractAddressResponse>(
+      `/api/v1/addresses?contract=${encodeURIComponent(contract)}`,
+      {},
+      token ?? undefined
+    ),
 
   // contracts
   getContractArtifact: (token: string | null | undefined, name: string) =>

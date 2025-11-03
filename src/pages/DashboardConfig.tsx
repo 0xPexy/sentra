@@ -258,7 +258,7 @@ function PaymasterCard({
     if (!amount) return;
     try {
       const value = parseEthAmountToValue(amount);
-      const wallet = getWalletClient();
+      const wallet = await getWalletClient();
       let account = (await wallet.getAddresses())[0];
       if (!account && wallet.requestAddresses) {
         const requested = await wallet.requestAddresses();
@@ -765,7 +765,7 @@ function UserWhitelistCard({
 
   return (
     <section className="space-y-4 rounded-xl border border-slate-800 bg-[#151A28] p-4">
-      <h3 className="font-semibold">Allowed users</h3>
+      <h3 className="font-semibold">Allowed accounts</h3>
 
       <div className="flex items-center gap-2 max-w-xl">
         <input

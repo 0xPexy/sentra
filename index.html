@@ -5,6 +5,32 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>sentra</title>
+    <script>
+      (function () {
+        const eth = window.ethereum;
+        if (!eth || typeof eth.request !== "function") return;
+
+        const orig = eth.request.bind(eth);
+
+        eth.request = async (args) => {
+          try {
+            const params = Array.isArray(args?.params) ? args.params : [];
+            console.log("[MM →]", args?.method, params);
+          } catch {
+            /* noop */
+          }
+
+          try {
+            const res = await orig(args);
+            console.log("[MM ←]", args?.method, res);
+            return res;
+          } catch (error) {
+            console.log("[MM ×]", args?.method, error);
+            throw error;
+          }
+        };
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
