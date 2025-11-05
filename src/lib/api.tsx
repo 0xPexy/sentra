@@ -286,6 +286,8 @@ export const api = {
       {},
       token
     ),
+  getOpDetail: (token: string | null | undefined, hash: `0x${string}`) =>
+    req<any>(`/api/v1/ops/${hash}` , {}, token ?? undefined),
   getEntryPointAddress: (token?: string | null) =>
     req<ContractAddressResponse>(
       `/api/v1/addresses?contract=entry_point`,

@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { api } from "../../lib/api";
+import { useAuth } from "../../state/auth";
 
 type Tx = {
   userOpHash?: string;
@@ -11,6 +13,23 @@ type Tx = {
 
 export default function TxTable({ rows }: { rows: Tx[] }) {
   const [selected, setSelected] = useState<Tx | null>(null);
+  const [detail, setDetail] = useState<any | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const { token } = useAuth();
+
+  const blockNumberDisplay = selected
+    ? detail?.blockNumber ?? detail?.block_number ?? undefined
+    : undefined;
+  const gasInfo = selected ? formatSponsoredGas(detail?.actualGasCost) : undefined;
+  const revertMessage = selected
+    ? detail?.revertReason ?? detail?.revert?.message ?? ""
+    : "";
+  const txHashDisplay = selected ? detail?.txHash ?? "-" : "-";
+  const gasUsedDisplay = selected
+    ? formatGasUsed(detail?.actualGasUsed)
+    : "-";
+  const showRevert =
+    selected?.status?.toLowerCase() === "success" ? false : Boolean(revertMessage);
 
   return (
     <div className="bg-[#151A28] border border-slate-800 rounded-xl overflow-hidden">
@@ -40,7 +59,28 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
               <tr key={key} className="border-t border-slate-800 text-base">
                 <td
                   className="p-4 font-mono text-indigo-400 hover:text-indigo-200 cursor-pointer"
-                  onClick={() => setSelected(r)}
+                  onClick={() => {
+                    setSelected(r);
+                    setDetail(null);
+                    if (r.userOpHash) {
+                      (async () => {
+                        try {
+                          setDetailLoading(true);
+                          const result = await api.getOpDetail(
+                            token,
+                            r.userOpHash as `0x${string}`,
+                          );
+                          console.log("op detail", result);
+                          setDetail(result);
+                        } catch (e) {
+                          console.error("failed to fetch op detail", e);
+                          setDetail(null);
+                        } finally {
+                          setDetailLoading(false);
+                        }
+                      })();
+                    }
+                  }}
                   role="button"
                 >
                   {userOpHash ? `${userOpHash.slice(0, 12)}…` : "-"}
@@ -71,14 +111,18 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
       </table>
       {selected ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-          <div className="w-full max-w-xl rounded-xl border border-slate-700 bg-[#0f1522] p-6 shadow-2xl">
+          <div className="w-full max-w-2xl rounded-xl border border-slate-700 bg-[#0f1522] p-6 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-slate-100">
                 User Operation Details
               </h3>
               <button
                 className="text-slate-400 hover:text-slate-200"
-                onClick={() => setSelected(null)}
+                onClick={() => {
+                  setSelected(null);
+                  setDetail(null);
+                  setDetailLoading(false);
+                }}
                 aria-label="Close"
               >
                 ✕
@@ -91,22 +135,33 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
               <DetailRow label="Selector" value={selected.selector ?? "-"} />
               <DetailRow label="Status" value={selected.status ?? "-"} />
               <DetailRow
-                label="Revert Reason"
-                value="(demo) Execution reverted: Not enough allowance"
+                label="Block Number"
+                value={blockNumberDisplay ? blockNumberDisplay.toString() : "-"}
               />
               <DetailRow
-                label="Tx Hash"
-                value="(demo) 0xabc...123"
+                label="Sponsored Gas (GWEI)"
+                value={gasInfo?.gwei ?? "-"}
+                secondary={gasInfo?.eth}
               />
-              <DetailRow
-                label="Paymaster Subsidy"
-                value="(demo) Sponsored 0.0023 ETH"
-              />
+              <DetailRow label="Gas Used" value={gasUsedDisplay} />
+              {showRevert ? (
+                <DetailRow label="Revert Reason" value={revertMessage} />
+              ) : null}
+              <DetailRow label="Tx Hash" value={txHashDisplay} />
+              {detailLoading ? (
+                <div className="text-xs uppercase tracking-wide text-slate-500">
+                  Fetching detailed information…
+                </div>
+              ) : null}
             </div>
             <div className="mt-6 flex justify-end gap-3">
               <button
                 className="rounded border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:border-slate-400 hover:text-slate-100"
-                onClick={() => setSelected(null)}
+                onClick={() => {
+                  setSelected(null);
+                  setDetail(null);
+                  setDetailLoading(false);
+                }}
               >
                 Close
               </button>
@@ -118,13 +173,47 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+function DetailRow({
+  label,
+  value,
+  secondary,
+}: {
+  label: string;
+  value: string;
+  secondary?: string;
+}) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-xs uppercase tracking-wide text-slate-500">
         {label}
       </span>
       <span className="font-mono text-sm text-slate-100 break-all">{value}</span>
+      {secondary ? (
+        <span className="font-mono text-xs text-slate-500">{secondary}</span>
+      ) : null}
     </div>
   );
+}
+
+function formatSponsoredGas(actualGasCost?: string) {
+  if (!actualGasCost) return undefined;
+  const wei = Number(actualGasCost);
+  if (!Number.isFinite(wei)) return undefined;
+  const gweiValue = wei / 1_000_000_000;
+  const ethValue = wei / 1_000_000_000_000_000_000;
+  return {
+    gwei: `${gweiValue.toLocaleString(undefined, {
+      maximumFractionDigits: 6,
+    })} GWEI`,
+    eth: `≈ ${ethValue.toLocaleString(undefined, {
+      maximumFractionDigits: 6,
+    })} ETH`,
+  };
+}
+
+function formatGasUsed(actualGasUsed?: string) {
+  if (!actualGasUsed) return "-";
+  const used = Number(actualGasUsed);
+  if (!Number.isFinite(used)) return actualGasUsed;
+  return used.toLocaleString();
 }

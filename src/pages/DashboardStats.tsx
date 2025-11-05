@@ -96,7 +96,6 @@ export default function DashboardStats() {
     let cancelled = false;
 
     const loadOps = async () => {
-      console.log("loadops")
       try {
         const response = await api.getPaymasterOps(token, paymasterAddress, {
           limit: 50,
