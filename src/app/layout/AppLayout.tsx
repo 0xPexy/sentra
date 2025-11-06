@@ -37,6 +37,16 @@ export default function AppLayout() {
           >
             Playground
           </NavLink>
+          <NavLink
+            to="/simulator"
+            className={({ isActive }) =>
+              `px-3 py-2 rounded ${
+                isActive ? "bg-slate-800" : "hover:bg-slate-800/50"
+              }`
+            }
+          >
+            Simulator
+          </NavLink>
         </nav>
       </aside>
       <main className="flex-1">
