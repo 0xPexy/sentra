@@ -18,6 +18,16 @@ export default function AppLayout() {
             Stats
           </NavLink>
           <NavLink
+            to="/gas"
+            className={({ isActive }) =>
+              `px-3 py-2 rounded ${
+                isActive ? "bg-slate-800" : "hover:bg-slate-800/50"
+              }`
+            }
+          >
+            Gas Analyzer
+          </NavLink>
+          <NavLink
             to="/config"
             className={({ isActive }) =>
               `px-3 py-2 rounded ${

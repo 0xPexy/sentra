@@ -32,6 +32,16 @@ export const ENTRYPOINT_ABI = [
   },
   {
     type: "function",
+    name: "withdrawTo",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "withdrawAddress", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "balanceOf",
     stateMutability: "view",
     inputs: [{ name: "account", type: "address" }],
@@ -209,4 +219,3 @@ export function getBundlerClientBySimpleAccount(account: SmartAccount) {
   })
   return client;
 }
-

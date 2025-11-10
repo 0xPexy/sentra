@@ -137,14 +137,6 @@ export default function DashboardConfig() {
         disabled={!isRegistered}
       />
 
-      <GasPolicyCard
-        pm={pm}
-        onSaved={refresh}
-        onError={handleError}
-        onSuccess={handleSuccess}
-        disabled={!isRegistered}
-      />
-
       <UserWhitelistCard
         users={users}
         onChange={refresh}
@@ -286,6 +278,58 @@ function PaymasterCard({
     }
   };
 
+  const withdraw = async () => {
+    if (!pm?.address || !isEthAddress(pm.address)) {
+      onError(new Error("Set Paymaster address first"));
+      return;
+    }
+    if (!pm.entryPoint || !entryPointValid) {
+      onError(new Error("Configure a valid EntryPoint address"));
+      return;
+    }
+    if (!depositWei || depositWei === 0n) {
+      onError(new Error("No deposit available to withdraw"));
+      return;
+    }
+    const amountInput = window.prompt("Withdraw amount in ETH (e.g. 0.05)");
+    if (!amountInput) return;
+    try {
+      const amountWei = parseEthAmountToValue(amountInput);
+      if (amountWei <= 0n) {
+        onError(new Error("Amount must be greater than zero"));
+        return;
+      }
+      if (depositWei !== null && amountWei > depositWei) {
+        onError(new Error("Amount exceeds available deposit"));
+        return;
+      }
+      const wallet = await getWalletClient();
+      let account = (await wallet.getAddresses())[0];
+      if (!account && wallet.requestAddresses) {
+        const requested = await wallet.requestAddresses();
+        account = requested?.[0];
+      }
+      if (!account) {
+        throw new Error("Connect your wallet before withdrawing");
+      }
+      const hash = await wallet.writeContract({
+        account,
+        chain: null,
+        address: pm.entryPoint as `0x${string}`,
+        abi: ENTRYPOINT_ABI,
+        functionName: "withdrawTo",
+        args: [account, amountWei],
+      });
+      onSuccess(`Withdrawal submitted: ${hash}`);
+      await getPublicClient().waitForTransactionReceipt({ hash });
+      onSuccess("Withdrawal confirmed on-chain");
+      window.dispatchEvent(new CustomEvent("sentra:wallet-refresh"));
+      onSaved();
+    } catch (error) {
+      onError(error);
+    }
+  };
+
   return (
     <section className="space-y-4 rounded-xl border border-slate-800 bg-[#151A28] p-4">
       <div className="flex items-center justify-between">
@@ -373,9 +417,16 @@ function PaymasterCard({
           </span>
           <button
             onClick={deposit}
-            className="h-9 rounded bg-slate-800 px-4 text-sm font-medium hover:bg-slate-700"
+            className="rounded border border-slate-700 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
           >
-            Add Deposit
+            Add
+          </button>
+          <button
+            onClick={withdraw}
+            disabled={!depositWei || depositWei === 0n}
+            className="rounded bg-red-900/40 px-3 py-1.5 text-sm font-medium text-red-200 hover:bg-red-900/60 disabled:opacity-60"
+          >
+            Remove
           </button>
         </div>
       </div>
@@ -640,81 +691,6 @@ function AllowlistCard({
     </section>
   );
 }
-function GasPolicyCard({
-  pm,
-  onSaved,
-  onSuccess,
-  onError,
-  disabled,
-}: {
-  pm: PaymasterResponse | null;
-  onSaved: () => void;
-  disabled: boolean;
-} & FeedbackHandlers) {
-  const { token } = useAuth();
-  const [usd, setUsd] = useState<number>(
-    pm?.usdPerMaxOp ?? pm?.usdcMaxPerOpUSD ?? 0
-  );
-  const [saving, setSaving] = useState(false);
-
-  const isUsdValid = useMemo(() => Number.isFinite(usd) && usd >= 0, [usd]);
-
-  useEffect(() => {
-    setUsd(pm?.usdPerMaxOp ?? pm?.usdcMaxPerOpUSD ?? 0);
-  }, [pm?.usdPerMaxOp, pm?.usdcMaxPerOpUSD]);
-
-  const save = async () => {
-    if (!token || disabled || !isUsdValid) return;
-    setSaving(true);
-    try {
-      await api.updatePaymaster(token, {
-        address: pm?.address,
-        usdPerMaxOp: usd,
-      });
-      onSuccess("Gas policy updated");
-      onSaved();
-    } catch (error) {
-      onError(error);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <section className="space-y-4 rounded-xl border border-slate-800 bg-[#151A28] p-4">
-      <h3 className="font-semibold">Gas policy</h3>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
-        <div>
-          <div className="mb-1 text-sm text-slate-400">
-            Max sponsored per operation (USD)
-          </div>
-          <input
-            type="number"
-            className={`w-40 rounded border px-3 py-2 outline-none ${
-              isUsdValid
-                ? "border-slate-700 bg-slate-900"
-                : "border-red-500/60 bg-red-500/10"
-            }`}
-            value={usd}
-            onChange={(e) => setUsd(Number(e.target.value))}
-            disabled={disabled}
-          />
-        </div>
-        <button
-          onClick={save}
-          disabled={saving || disabled || !isUsdValid}
-          className="h-10 rounded bg-indigo-600 px-4 text-sm font-medium hover:bg-indigo-500 disabled:opacity-60"
-        >
-          {saving ? "Saving…" : "Save"}
-        </button>
-      </div>
-      <p className="text-xs text-slate-400">
-        * Conversion follows backend oracle logic (e.g. Chainlink).
-      </p>
-    </section>
-  );
-}
-
 function UserWhitelistCard({
   users,
   onChange,

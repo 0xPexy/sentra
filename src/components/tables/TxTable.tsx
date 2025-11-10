@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { useAuth } from "../../state/auth";
 
@@ -21,6 +22,7 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
     ? detail?.blockNumber ?? detail?.block_number ?? undefined
     : undefined;
   const gasInfo = selected ? formatSponsoredGas(detail?.actualGasCost) : undefined;
+  const beneficiaryAddress = detail?.beneficiary ?? detail?.beneficiaryAddress;
   const revertMessage = selected
     ? detail?.revertReason ?? detail?.revert?.message ?? ""
     : "";
@@ -66,12 +68,27 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
                       (async () => {
                         try {
                           setDetailLoading(true);
-                          const result = await api.getOpDetail(
+                          const hash = r.userOpHash as `0x${string}`;
+                          const detailResultPromise = api.getOpDetail(
                             token,
-                            r.userOpHash as `0x${string}`,
+                            hash
                           );
-                          console.log("op detail", result);
-                          setDetail(result);
+                          const gasResultPromise = api
+                            .getOpGas(token, hash)
+                            .then((gas) => {
+                              console.log("op gas", gas);
+                              return gas;
+                            })
+                            .catch((error) => {
+                              console.error("failed to fetch op gas", error);
+                              return null;
+                            });
+                          const [detailResult] = await Promise.all([
+                            detailResultPromise,
+                            gasResultPromise,
+                          ]);
+                          console.log("op detail", detailResult);
+                          setDetail(detailResult);
                         } catch (e) {
                           console.error("failed to fetch op detail", e);
                           setDetail(null);
@@ -110,8 +127,18 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
         </tbody>
       </table>
       {selected ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-          <div className="w-full max-w-2xl rounded-xl border border-slate-700 bg-[#0f1522] p-6 shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+          onClick={() => {
+            setSelected(null);
+            setDetail(null);
+            setDetailLoading(false);
+          }}
+        >
+          <div
+            className="w-full max-w-2xl rounded-xl border border-slate-700 bg-[#0f1522] p-6 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-slate-100">
                 User Operation Details
@@ -143,6 +170,10 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
                 value={gasInfo?.gwei ?? "-"}
                 secondary={gasInfo?.eth}
               />
+              <DetailRow
+                label="Beneficiary"
+                value={beneficiaryAddress ?? "-"}
+              />
               <DetailRow label="Gas Used" value={gasUsedDisplay} />
               {showRevert ? (
                 <DetailRow label="Revert Reason" value={revertMessage} />
@@ -155,6 +186,14 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
               ) : null}
             </div>
             <div className="mt-6 flex justify-end gap-3">
+              {selected.userOpHash ? (
+                <Link
+                  to={`/gas?hash=${selected.userOpHash}`}
+                  className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+                >
+                  Analyze Gas
+                </Link>
+              ) : null}
               <button
                 className="rounded border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:border-slate-400 hover:text-slate-100"
                 onClick={() => {

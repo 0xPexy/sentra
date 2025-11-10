@@ -246,6 +246,10 @@ export type PaymasterOpsResponse = {
   nextCursor?: string | null;
 };
 
+export type OpGasResponse = {
+  [key: string]: unknown;
+};
+
 export const api = {
   login: (username: string, password: string) =>
     req<{ token: string }>("/auth/login", {
@@ -285,9 +289,11 @@ export const api = {
       `/api/v1/paymasters/${address}/ops${buildQuery(params)}`,
       {},
       token
-    ),
+  ),
   getOpDetail: (token: string | null | undefined, hash: `0x${string}`) =>
-    req<any>(`/api/v1/ops/${hash}` , {}, token ?? undefined),
+    req<any>(`/api/v1/ops/${hash}`, {}, token ?? undefined),
+  getOpGas: (token: string | null | undefined, hash: `0x${string}`) =>
+    req<OpGasResponse>(`/api/v1/ops/${hash}/gas`, {}, token ?? undefined),
   getEntryPointAddress: (token?: string | null) =>
     req<ContractAddressResponse>(
       `/api/v1/addresses?contract=entry_point`,

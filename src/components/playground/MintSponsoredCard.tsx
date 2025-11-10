@@ -251,7 +251,7 @@ export function MintSponsoredCard({
         paymasterVerificationGasLimit:
           paymasterStub.paymasterVerificationGasLimit,
       });
-
+      console.log(gasEstimates);
       const adjustedCallGasLimit = gasEstimates.callGasLimit + 100_000n;
       const adjustedVerificationGasLimit =
         gasEstimates.verificationGasLimit + 75_000n;

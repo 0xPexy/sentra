@@ -6,6 +6,7 @@ import Playground from "../pages/Playground";
 import Simulator from "../pages/Simulator";
 import AppLayout from "./layout/AppLayout";
 import ProtectedRoute from "./ProtectedRoute";
+import GasAnalyzer from "../pages/GasAnalyzer";
 export const router = createBrowserRouter([
   { path: "/login", element: <Login /> },
   {
@@ -20,6 +21,7 @@ export const router = createBrowserRouter([
       { path: "config", element: <DashboardConfig /> },
       { path: "playground", element: <Playground /> },
       { path: "simulator", element: <Simulator /> },
+      { path: "gas", element: <GasAnalyzer /> },
     ],
   },
 ]);
