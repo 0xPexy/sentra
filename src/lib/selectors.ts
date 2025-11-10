@@ -24,14 +24,35 @@ export function parseSelectorEntries(csv: string): SelectorEntry[] {
     throw new Error("Use commas to separate function signatures");
   }
 
-  return csv
-    .split(",")
-    .map((chunk) => chunk.trim())
-    .filter(Boolean)
+  const chunks = splitSignatures(csv);
+
+  return chunks
     .map((chunk) => {
       if (chunk.startsWith("0x")) {
         return { selector: toSelector(chunk) } as SelectorEntry;
       }
       return { selector: toSelector(chunk), signature: chunk } satisfies SelectorEntry;
     });
+}
+
+function splitSignatures(csv: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let depth = 0;
+
+  for (const char of csv) {
+    if (char === "," && depth === 0) {
+      const trimmed = current.trim();
+      if (trimmed) parts.push(trimmed);
+      current = "";
+      continue;
+    }
+    current += char;
+    if (char === "(") depth += 1;
+    else if (char === ")" && depth > 0) depth -= 1;
+  }
+
+  const trimmed = current.trim();
+  if (trimmed) parts.push(trimmed);
+  return parts;
 }

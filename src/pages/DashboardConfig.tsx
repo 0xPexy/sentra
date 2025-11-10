@@ -16,6 +16,18 @@ import PageHeader from "../components/layout/PageHeader";
 import { isEthAddress } from "../lib/address";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+const PAYMASTER_WITHDRAW_ABI = [
+  {
+    type: "function",
+    name: "withdrawTo",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "withdrawAddress", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+] as const;
 
 export default function DashboardConfig() {
   const { token } = useAuth();
@@ -283,10 +295,6 @@ function PaymasterCard({
       onError(new Error("Set Paymaster address first"));
       return;
     }
-    if (!pm.entryPoint || !entryPointValid) {
-      onError(new Error("Configure a valid EntryPoint address"));
-      return;
-    }
     if (!depositWei || depositWei === 0n) {
       onError(new Error("No deposit available to withdraw"));
       return;
@@ -315,8 +323,8 @@ function PaymasterCard({
       const hash = await wallet.writeContract({
         account,
         chain: null,
-        address: pm.entryPoint as `0x${string}`,
-        abi: ENTRYPOINT_ABI,
+        address: pm.address as `0x${string}`,
+        abi: PAYMASTER_WITHDRAW_ABI,
         functionName: "withdrawTo",
         args: [account, amountWei],
       });
@@ -628,25 +636,26 @@ function AllowlistCard({
               return (
                 <tr key={contract.id} className="border-t border-slate-800">
                   <td
-                    className="px-3 py-2 align-top max-w-[120px] truncate"
+                    className="px-3 py-2 align-middle max-w-[120px] truncate"
                     title={contract.name ?? "-"}
                   >
                     {contract.name || "-"}
                   </td>
                   <td
-                    className="px-3 py-2 font-mono align-top max-w-[360px] truncate"
+                    className="px-3 py-2 font-mono align-middle max-w-[360px] truncate"
                     title={contract.address}
                   >
                     {contract.address}
                   </td>
                   <td className="px-3 py-2">
-                    <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-4 justify-between">
                       <div className="flex flex-wrap gap-2">
                         {functions.length > 0 ? (
                           functions.map((fn) => (
                             <span
                               key={`${contract.id}-${fn.selector}`}
                               className="rounded bg-slate-800 px-2 py-1 font-mono text-xs text-slate-200"
+                              title={fn.selector}
                             >
                               {fn.signature ?? fn.selector}
                             </span>
@@ -657,7 +666,7 @@ function AllowlistCard({
                           </span>
                         )}
                       </div>
-                      <div className="flex justify-end gap-2">
+                      <div className="flex flex-nowrap gap-2 ml-auto">
                         <button
                           onClick={() => editFunctions(contract)}
                           className="rounded border border-slate-700 px-3 py-1.5 text-xs font-medium hover:bg-slate-800 disabled:opacity-60"

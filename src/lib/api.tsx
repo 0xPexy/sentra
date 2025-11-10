@@ -347,7 +347,7 @@ export const api = {
     req<ContractWL>(
       `/api/v1/paymasters/me/contracts/${contractId}`,
       {
-        method: "PUT",
+        method: "PATCH",
         body: JSON.stringify(payload),
       },
       token

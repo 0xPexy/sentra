@@ -21,6 +21,7 @@ import {
 import { encodeFunctionData, parseAbi } from "viem";
 import { usePlaygroundStoredState } from "../hooks/usePlaygroundStoredState";
 import { getUserOperationTypedData } from "viem/account-abstraction";
+import { toSelector } from "../lib/selectors";
 
 type ButtonProps = {
   children: ReactNode;
@@ -54,6 +55,7 @@ function SecondaryButton({ children, onClick, disabled }: ButtonProps) {
 
 type SimulationPreset =
   | "AA10_ALREADY_CONSTRUCTED"
+  | "AA21_PAYMASTER_PREFUND"
   | "AA23_VALIDATION_GAS"
   | "AA24_SIGNATURE_ERROR"
   | "AA25_INVALID_NONCE"
@@ -79,9 +81,10 @@ const ENTRY_POINT_ABI = parseAbi([
 const DEFAULT_MAX_FEE = 30_000_000_000n;
 const DEFAULT_PRIORITY_FEE = 1_000_000_000n;
 const DEFAULT_CALL_GAS = 1_000_000n;
-const DEFAULT_VERIFICATION_GAS = 5_000_000n;
+const DEFAULT_VERIFICATION_GAS = 500_000n;
 const DEFAULT_PRE_VERIFICATION_GAS = 1_000_000n;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+const SAFE_MINT_SELECTOR = toSelector("safeMint(address,string)");
 
 export default function Simulator() {
   const { token } = useAuth();
@@ -95,17 +98,16 @@ export default function Simulator() {
     salt: storedState.lastSalt ?? "0",
     target: lastDeploy?.address ?? "",
     recipient: storedState.simpleAccountOwner ?? "",
-    tokenId: "0",
   });
 
   type FormState = typeof form;
-  type SimulationCardConfig = {
-    preset: SimulationPreset;
-    title: string;
-    description: string;
-    badInput: (state: FormState) => string;
-    fixTip: (state: FormState) => string;
-  };
+type SimulationCardConfig = {
+  preset: SimulationPreset;
+  title: string;
+  description: string;
+  badInput: (state: FormState) => string;
+  fixTip: (state: FormState) => string;
+};
 
   const createPresetResults = () => ({
     bad: { status: "idle" as const },
@@ -116,6 +118,7 @@ export default function Simulator() {
     Record<SimulationPreset, { bad: SimulationResult; fix: SimulationResult }>
   >({
     AA10_ALREADY_CONSTRUCTED: createPresetResults(),
+    AA21_PAYMASTER_PREFUND: createPresetResults(),
     AA23_VALIDATION_GAS: createPresetResults(),
     AA24_SIGNATURE_ERROR: createPresetResults(),
     AA25_INVALID_NONCE: createPresetResults(),
@@ -136,6 +139,15 @@ export default function Simulator() {
           badInput: (state) =>
             `initCode = factory.createAccount(owner=${shorten(state.owner)}, salt=${state.salt})`,
           fixTip: () => "initCode removed (reuse deployed account).",
+        },
+        {
+          preset: "AA21_PAYMASTER_PREFUND" as SimulationPreset,
+          title: "AA21 — Prefund Not Paid",
+          description:
+            "Route the UserOp through the paymaster client decorator so EntryPoint never receives the prefund (AA21).",
+          badInput: () => "paymaster client decorator (no prefund deposit)",
+          fixTip: () =>
+            "paymaster = resolved paymaster address/data (prefund paid).",
         },
         {
           preset: "AA23_VALIDATION_GAS" as SimulationPreset,
@@ -214,79 +226,97 @@ export default function Simulator() {
     mode: SimulationMode
   ) => {
     if (!token) {
-      setResults((prev) => ({
-        ...prev,
-        [preset]: {
-          ...prev[preset],
-          [mode]: { status: "error", message: "Login is required." },
-        },
-      }));
+      setResults((prev) => {
+        const current = prev[preset] ?? createPresetResults();
+        return {
+          ...prev,
+          [preset]: {
+            ...current,
+            [mode]: { status: "error", message: "Login is required." },
+          },
+        };
+      });
       return;
     }
 
     if (!isEthAddress(form.entryPoint)) {
-      setResults((prev) => ({
-        ...prev,
-        [preset]: {
-          ...prev[preset],
-          [mode]: {
-            status: "error",
-            message: "Check the EntryPoint address.",
+      setResults((prev) => {
+        const current = prev[preset] ?? createPresetResults();
+        return {
+          ...prev,
+          [preset]: {
+            ...current,
+            [mode]: {
+              status: "error",
+              message: "Check the EntryPoint address.",
+            },
           },
-        },
-      }));
+        };
+      });
       return;
     }
     if (!isEthAddress(form.sender)) {
-      setResults((prev) => ({
-        ...prev,
-        [preset]: {
-          ...prev[preset],
-          [mode]: {
-            status: "error",
-            message: "Check the Simple Account address.",
+      setResults((prev) => {
+        const current = prev[preset] ?? createPresetResults();
+        return {
+          ...prev,
+          [preset]: {
+            ...current,
+            [mode]: {
+              status: "error",
+              message: "Check the Simple Account address.",
+            },
           },
-        },
-      }));
+        };
+      });
       return;
     }
     if (!isEthAddress(form.factory)) {
-      setResults((prev) => ({
-        ...prev,
-        [preset]: {
-          ...prev[preset],
-          [mode]: {
-            status: "error",
-            message: "Check the factory address.",
+      setResults((prev) => {
+        const current = prev[preset] ?? createPresetResults();
+        return {
+          ...prev,
+          [preset]: {
+            ...current,
+            [mode]: {
+              status: "error",
+              message: "Check the factory address.",
+            },
           },
-        },
-      }));
+        };
+      });
       return;
     }
     if (!isEthAddress(form.target)) {
-      setResults((prev) => ({
-        ...prev,
-        [preset]: {
-          ...prev[preset],
-          [mode]: {
-            status: "error",
-            message: "Check the target contract address.",
+      setResults((prev) => {
+        const current = prev[preset] ?? createPresetResults();
+        return {
+          ...prev,
+          [preset]: {
+            ...current,
+            [mode]: {
+              status: "error",
+              message: "Check the target contract address.",
+            },
           },
-        },
-      }));
+        };
+      });
       return;
     }
     if (!isEthAddress(form.recipient)) {
-      setResults((prev) => ({
-        ...prev,
-        [preset]: {
-          ...prev[preset],
-          [mode]: {
-            status: "error",
-            message: "Check the recipient address.",
+      setResults((prev) => {
+        const current = prev[preset] ?? createPresetResults();
+        return {
+          ...prev,
+          [preset]: {
+            ...current,
+            [mode]: {
+              status: "error",
+              message: "Check the recipient address.",
+            },
           },
-        },
-      }));
+        };
+      });
       return;
     }
 
@@ -294,29 +324,35 @@ export default function Simulator() {
     try {
       saltBigInt = BigInt(form.salt || "0");
     } catch {
-      setResults((prev) => ({
-        ...prev,
-        [preset]: {
-          ...prev[preset],
-          [mode]: { status: "error", message: "Salt must be an integer." },
-        },
-      }));
+      setResults((prev) => {
+        const current = prev[preset] ?? createPresetResults();
+        return {
+          ...prev,
+          [preset]: {
+            ...current,
+            [mode]: { status: "error", message: "Salt must be an integer." },
+          },
+        };
+      });
       return;
     }
 
-    setResults((prev) => ({
-      ...prev,
-      [preset]: {
-        ...prev[preset],
-        [mode]: {
-          status: "loading",
-          message:
-            mode === "bad"
-              ? "Simulating with invalid input…"
-              : "Simulating with corrected input…",
+    setResults((prev) => {
+      const current = prev[preset] ?? createPresetResults();
+      return {
+        ...prev,
+        [preset]: {
+          ...current,
+          [mode]: {
+            status: "loading",
+            message:
+              mode === "bad"
+                ? "Simulating with invalid input…"
+                : "Simulating with corrected input…",
+          },
         },
-      },
-    }));
+      };
+    });
 
     let scenarioNote: string | undefined;
     try {
@@ -336,7 +372,10 @@ export default function Simulator() {
       const safeMintData = encodeFunctionData({
         abi: SAFE_MINT_ABI,
         functionName: "safeMint",
-        args: [form.recipient as `0x${string}`, BigInt(form.tokenId || "0")],
+        args: [
+          form.recipient as `0x${string}`,
+          "http://localhost:8080/api/v1/playground/nft",
+        ],
       });
 
       const prepared = await bundler.prepareUserOperation({
@@ -360,40 +399,49 @@ export default function Simulator() {
         : { ...preparedOperation };
 
       const paymasterClient = getPaymasterClient(token);
-      const paymasterStub = await paymasterClient.getPaymasterStubData({
-        ...sanitizedPreparedOperation,
-        entryPointAddress: form.entryPoint as `0x${string}`,
-        chainId,
-        context: {
-          target: form.target as `0x${string}`,
-          selector: "0xa1448194",
-        },
-      });
+      const useDecorator = preset === "AA21_PAYMASTER_PREFUND" && mode === "bad";
+      let baseOp = { ...sanitizedPreparedOperation };
 
-      const baseOp = {
-        ...sanitizedPreparedOperation,
-        paymaster: paymasterStub.paymaster,
-        paymasterData: paymasterStub.paymasterData,
-        paymasterVerificationGasLimit:
-          paymasterStub.paymasterVerificationGasLimit,
-        paymasterPostOpGasLimit: paymasterStub.paymasterPostOpGasLimit,
-      };
+      if (useDecorator) {
+        console.debug(
+          "[simulator] using paymaster decorator (prefund withheld) to trigger AA21"
+        );
+      } else {
+        const paymasterStub = await paymasterClient.getPaymasterStubData({
+          ...sanitizedPreparedOperation,
+          entryPointAddress: form.entryPoint as `0x${string}`,
+          chainId,
+          context: {
+            target: form.target as `0x${string}`,
+            selector: SAFE_MINT_SELECTOR,
+          },
+        });
 
-      const paymasterData = await paymasterClient.getPaymasterData({
-        ...baseOp,
-        entryPointAddress: form.entryPoint as `0x${string}`,
-        chainId,
-        context: {
-          target: form.target as `0x${string}`,
-          selector: "0xa1448194",
-        },
-      });
+        baseOp = {
+          ...sanitizedPreparedOperation,
+          paymaster: paymasterStub.paymaster,
+          paymasterData: paymasterStub.paymasterData,
+          paymasterVerificationGasLimit:
+            paymasterStub.paymasterVerificationGasLimit,
+          paymasterPostOpGasLimit: paymasterStub.paymasterPostOpGasLimit,
+        };
 
-      baseOp.paymaster = paymasterData.paymaster;
-      baseOp.paymasterData = paymasterData.paymasterData;
-      baseOp.paymasterVerificationGasLimit =
-        paymasterData.paymasterVerificationGasLimit;
-      baseOp.paymasterPostOpGasLimit = paymasterData.paymasterPostOpGasLimit;
+        const paymasterData = await paymasterClient.getPaymasterData({
+          ...baseOp,
+          entryPointAddress: form.entryPoint as `0x${string}`,
+          chainId,
+          context: {
+            target: form.target as `0x${string}`,
+            selector: SAFE_MINT_SELECTOR,
+          },
+        });
+
+        baseOp.paymaster = paymasterData.paymaster;
+        baseOp.paymasterData = paymasterData.paymasterData;
+        baseOp.paymasterVerificationGasLimit =
+          paymasterData.paymasterVerificationGasLimit;
+        baseOp.paymasterPostOpGasLimit = paymasterData.paymasterPostOpGasLimit;
+      }
 
       const { operation: mutated, note, beneficiary: overrideBeneficiary } =
         await mutateForPreset({
@@ -500,34 +548,40 @@ export default function Simulator() {
       const errorMessage =
         readableError ??
         (code ? `Detected code: ${code}` : "Simulation response requires review.");
-      setResults((prev) => ({
-        ...prev,
-        [preset]: {
-          ...prev[preset],
-          [mode]: {
-            status: panelStatus,
-            code: simulationSucceeded ? undefined : code,
-            message: simulationSucceeded
-              ? "Simulation succeeded."
-              : errorMessage,
-            raw: json,
-            note: scenarioNote,
+      setResults((prev) => {
+        const current = prev[preset] ?? createPresetResults();
+        return {
+          ...prev,
+          [preset]: {
+            ...current,
+            [mode]: {
+              status: panelStatus,
+              code: simulationSucceeded ? undefined : code,
+              message: simulationSucceeded
+                ? "Simulation succeeded."
+                : errorMessage,
+              raw: json,
+              note: scenarioNote,
+            },
           },
-        },
-      }));
+        };
+      });
     } catch (error: any) {
       console.error(error);
-      setResults((prev) => ({
-        ...prev,
-        [preset]: {
-          ...prev[preset],
-          [mode]: {
-            status: "error",
-            message: error?.message ?? String(error),
-            note: scenarioNote,
+      setResults((prev) => {
+        const current = prev[preset] ?? createPresetResults();
+        return {
+          ...prev,
+          [preset]: {
+            ...current,
+            [mode]: {
+              status: "error",
+              message: error?.message ?? String(error),
+              note: scenarioNote,
+            },
           },
-        },
-      }));
+        };
+      });
     }
   };
 
@@ -582,18 +636,13 @@ export default function Simulator() {
             onChange={(value) => updateForm("recipient", value)}
             placeholder="0xRecipient"
           />
-          <LabeledInput
-            label="Token ID"
-            value={form.tokenId}
-            onChange={(value) => updateForm("tokenId", value)}
-            placeholder="0"
-          />
         </div>
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {presets.map((card) => {
-          const result = results[card.preset];
+          const result =
+            results[card.preset] ?? createPresetResults();
           return (
             <div
               key={card.preset}

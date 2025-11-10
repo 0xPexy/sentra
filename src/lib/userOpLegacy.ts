@@ -44,7 +44,7 @@ export const SAFE_MINT_ABI = [
     stateMutability: "nonpayable",
     inputs: [
       { name: "to", type: "address" },
-      { name: "tokenId", type: "uint256" },
+      { name: "uri", type: "string" },
     ],
     outputs: [],
   },

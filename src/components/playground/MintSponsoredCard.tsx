@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 import { encodeFunctionData } from "viem";
 import { useAuth } from "../../state/auth";
 import { api, type PaymasterResponse } from "../../lib/api";
@@ -23,12 +23,19 @@ type Props = {
   entryPointHint?: `0x${string}` | "";
 };
 
+type EthereumProvider = {
+  request?: (args: {
+    method: string;
+    params?: Record<string, unknown>;
+  }) => Promise<unknown>;
+};
+
 const GWEI = 1_000_000_000n;
 const DEFAULT_MAX_PRIORITY_FEE = 1n * GWEI;
 const DEFAULT_MAX_FEE = 30n * GWEI;
 const DEFAULT_CALL_GAS_LIMIT = 1_000_000n;
 const DEFAULT_PRE_VERIFICATION_GAS = 1_000_000n;
-const DEFAULT_VERIFICATION_GAS_LIMIT = 5_000_000n;
+const DEFAULT_VERIFICATION_GAS_LIMIT = 500_000n;
 
 export function MintSponsoredCard({
   defaultTarget,
@@ -47,17 +54,8 @@ export function MintSponsoredCard({
   const [senderAddress, setSenderAddress] = useState<`0x${string}` | "">(
     defaultSender
   );
-  const [tokenId, setTokenId] = useState<string>("");
-  const tokenIdDirtyRef = useRef(false);
   const [status, setStatus] = useState("");
-  const handleSupplyUpdate = useCallback((value: bigint) => {
-    if (!tokenIdDirtyRef.current) {
-      setTokenId(value.toString());
-    }
-  }, []);
-  const { supply, refresh: refreshSupply } = useNftTotalSupply(target, {
-    onUpdate: handleSupplyUpdate,
-  });
+  const { supply, refresh: refreshSupply } = useNftTotalSupply(target);
 
   const derivedFactory =
     simpleAccountFactory && isEthAddress(simpleAccountFactory)
@@ -83,7 +81,6 @@ export function MintSponsoredCard({
   useEffect(() => {
     if (defaultTarget) {
       setTarget(defaultTarget);
-      tokenIdDirtyRef.current = false;
     }
   }, [defaultTarget]);
 
@@ -92,13 +89,6 @@ export function MintSponsoredCard({
       setSenderAddress(defaultSender);
     }
   }, [defaultSender]);
-
-  useEffect(() => {
-    if (!target) {
-      setTokenId("");
-      tokenIdDirtyRef.current = false;
-    }
-  }, [target]);
 
   useEffect(() => {
     if (!token) {
@@ -151,17 +141,6 @@ export function MintSponsoredCard({
       setStatus("failed: recipient address is required.");
       return;
     }
-    if (!tokenId.trim()) {
-      setStatus("failed: tokenId is required.");
-      return;
-    }
-    let tokenIdValue: bigint;
-    try {
-      tokenIdValue = BigInt(tokenId);
-    } catch {
-      setStatus("failed: tokenId must be an integer.");
-      return;
-    }
     if (
       !paymasterInfo ||
       (!paymasterInfo.entryPoint && !derivedEntryPointHint)
@@ -197,15 +176,20 @@ export function MintSponsoredCard({
       return;
     }
 
-    setStatus("preparing user operation...");
+    setStatus("Preparing user operation…");
     try {
-      const selector = toSelector("safeMint(address,uint256)");
+      setStatus((prev) => `${prev}\n1. Encoding safeMint calldata…`);
+      const selector = toSelector("safeMint(address,string)");
       const safeMintData = encodeFunctionData({
         abi: SAFE_MINT_ABI,
         functionName: "safeMint",
-        args: [recipient as `0x${string}`, tokenIdValue],
+        args: [
+          recipient as `0x${string}`,
+          "http://localhost:8080/api/v1/playground/nft",
+        ],
       });
 
+      setStatus((prev) => `${prev}\n2. Preparing UserOperation…`);
       const publicClient = getPublicClient();
       const walletClient = await getWalletClient();
       const account = await getSimpleSmartAccount(
@@ -217,6 +201,7 @@ export function MintSponsoredCard({
       );
       const bundler = getBundlerClientBySimpleAccount(account);
 
+      setStatus((prev) => `${prev}\n3. Requesting bundler prepareUserOperation…`);
       const preparedOp = await bundler.prepareUserOperation({
         calls: [
           {
@@ -232,6 +217,9 @@ export function MintSponsoredCard({
       });
 
       const paymasterClient = getPaymasterClient();
+      setStatus(
+        (prev) => `${prev}\n4. Fetching paymaster stub data (pm_getPaymasterStubData)…`
+      );
       const paymasterStub = await paymasterClient.getPaymasterStubData({
         ...preparedOp,
         entryPointAddress: entryPoint,
@@ -242,6 +230,7 @@ export function MintSponsoredCard({
         },
       });
 
+      setStatus((prev) => `${prev}\n5. Estimating gas from bundler…`);
       const gasEstimates = await bundler.estimateUserOperationGas({
         account,
         ...preparedOp,
@@ -251,15 +240,19 @@ export function MintSponsoredCard({
         paymasterVerificationGasLimit:
           paymasterStub.paymasterVerificationGasLimit,
       });
-      console.log(gasEstimates);
-      const adjustedCallGasLimit = gasEstimates.callGasLimit + 100_000n;
+      const adjustedCallGasLimit = gasEstimates.callGasLimit + 300_000n;
       const adjustedVerificationGasLimit =
         gasEstimates.verificationGasLimit + 75_000n;
       const adjustedPreVerificationGas =
         (gasEstimates.preVerificationGas * 125n) / 100n;
-    
-      const { signature: _ignoredSignature, ...unsignedOp } = preparedOp;
 
+      const { signature: _unusedSignature, ...unsignedOp } = preparedOp;
+      void _unusedSignature;
+
+      setStatus(
+        (prev) =>
+          `${prev}\n6. Sending UserOperation… (CGL=${adjustedCallGasLimit.toString()}, VGL=${adjustedVerificationGasLimit.toString()}, PVG=${adjustedPreVerificationGas.toString()})`
+      );
       const userOpHash = await bundler.sendUserOperation({
         account,
         ...unsignedOp,
@@ -273,12 +266,15 @@ export function MintSponsoredCard({
         },
       });
 
-      setStatus(`submitted ✅\nuserOpHash: ${userOpHash}`);
-      tokenIdDirtyRef.current = false;
+      setStatus(
+        (prev) =>
+          `${prev}\n7. submitted ✅\nuserOpHash: ${userOpHash}\nWaiting for totalSupply refresh…`
+      );
       await refreshSupply();
-    } catch (error: any) {
+    } catch (error) {
       console.error("sendUserOperation failed", error);
-      setStatus(`failed: ${error?.message ?? String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`failed: ${message}`);
     }
   };
 
@@ -293,7 +289,7 @@ export function MintSponsoredCard({
     }
     const latestMinted = supply > 0n ? supply - 1n : 0n;
 
-    const eth = (window as any).ethereum;
+    const eth = (window as Window & { ethereum?: EthereumProvider }).ethereum;
     if (!eth?.request) {
       setStatus("failed: MetaMask (window.ethereum) not found.");
       return;
@@ -315,12 +311,9 @@ export function MintSponsoredCard({
           ? `${prev}\nMetaMask import requested.`
           : "MetaMask import requested."
       );
-    } catch (error: any) {
-      setStatus(
-        `failed: unable to import NFT to MetaMask - ${
-          error?.message ?? String(error)
-        }`
-      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`failed: unable to import NFT to MetaMask - ${message}`);
     }
   };
 
@@ -336,7 +329,9 @@ export function MintSponsoredCard({
             className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono"
             placeholder="0xMinter..."
             value={senderAddress}
-            onChange={(event) => setSenderAddress(event.target.value as any)}
+            onChange={(event: ChangeEvent<HTMLInputElement>) =>
+              setSenderAddress(event.target.value as `0x${string}` | "")
+            }
           />
         </div>
         <div className="md:col-span-2">
@@ -347,13 +342,9 @@ export function MintSponsoredCard({
             className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono"
             placeholder="0x..."
             value={target}
-            onChange={(event) => {
-              const value = event.target.value as any;
-              setTarget(value);
-              tokenIdDirtyRef.current = false;
-              setTokenIdDirty(false);
-              setTokenId("");
-            }}
+            onChange={(event: ChangeEvent<HTMLInputElement>) =>
+              setTarget(event.target.value as `0x${string}` | "")
+            }
           />
         </div>
         <div className="md:col-span-3">
@@ -362,26 +353,16 @@ export function MintSponsoredCard({
             className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono"
             placeholder="0xRecipient..."
             value={recipient}
-            onChange={(event) => setRecipient(event.target.value as any)}
+            onChange={(event: ChangeEvent<HTMLInputElement>) =>
+              setRecipient(event.target.value as `0x${string}` | "")
+            }
           />
         </div>
-        <div className="md:col-span-3">
-          <div className="mb-1 text-sm text-slate-400">Token ID</div>
-          <input
-            className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono"
-            placeholder="uint256 tokenId"
-            value={tokenId}
-            onChange={(event) => {
-              tokenIdDirtyRef.current = true;
-              setTokenId(event.target.value);
-            }}
-          />
-          {supply !== null && (
-            <div className="mt-1 text-xs text-slate-400">
-              totalSupply: {supply.toString()}
-            </div>
-          )}
-        </div>
+        {supply !== null && (
+          <div className="md:col-span-3 text-xs text-slate-400">
+            totalSupply: {supply.toString()}
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-3">

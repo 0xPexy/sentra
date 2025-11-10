@@ -339,8 +339,8 @@ async function allowlistNewContract({
       name: contractName,
       functions: [
         {
-          selector: toSelector("safeMint(address,uint256)"),
-          signature: "safeMint(address,uint256)",
+          selector: toSelector("safeMint(address,string)"),
+          signature: "safeMint(address,string)",
         },
       ],
     });
