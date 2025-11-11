@@ -1,4 +1,5 @@
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import PageHeader from "../components/layout/PageHeader";
 import { api } from "../lib/api";
@@ -49,9 +50,9 @@ type GasSummary = {
 };
 
 const PHASE_COLORS: Record<string, string> = {
-  validation: "#60a5fa",
-  execution: "#34d399",
-  postOp: "#f472b6",
+  validation: "#14f195",
+  execution: "#00c2ff",
+  postOp: "#ff7ce5",
   "pre-verification": "#fbbf24",
   overhead: "#c084fc",
 };
@@ -221,19 +222,24 @@ function useGasAnalysis(
 
 function GasDonut({ phases }: { phases: GasPhaseView[] }) {
   const total = phases.reduce((sum, phase) => sum + phase.gasUsed, 0) || 1;
+  const palette = ["#14f195", "#00c2ff", "#ff7ce5", "#fbbf24", "#c084fc"];
+  const decorated = phases.map((phase, idx) => ({
+    ...phase,
+    gradientColor: palette[idx % palette.length],
+  }));
   let offset = 0;
-  const segments = phases
+  const segments = decorated
     .filter((phase) => phase.gasUsed > 0)
     .map((phase) => {
       const percent = (phase.gasUsed / total) * 100;
       const start = offset;
       const end = offset + percent;
       offset = end;
-      return `${phase.color} ${start}% ${end}%`;
+      return `${phase.gradientColor} ${start}% ${end}%`;
     });
   const gradient =
     segments.length > 0
-      ? `conic-gradient(${segments.join(", ")})`
+      ? `conic-gradient(from -90deg, ${segments.join(", ")})`
       : "radial-gradient(circle, #1e293b 0%, #0f172a 100%)";
   return (
     <div className="flex flex-col items-center gap-3">
@@ -241,18 +247,18 @@ function GasDonut({ phases }: { phases: GasPhaseView[] }) {
         className="h-48 w-48 rounded-full border border-slate-700"
         style={{ background: gradient }}
       >
-        <div className="mx-auto my-6 flex h-36 w-36 items-center justify-center rounded-full bg-[#0f172a] text-center text-sm text-slate-200">
+        <div className="mx-auto my-6 flex h-36 w-36 items-center justify-center rounded-full bg-slate-950/80 border border-slate-800 text-center text-sm text-slate-200">
           Total Used
           <br />
           {formatNumber(total)}
         </div>
       </div>
       <div className="flex flex-wrap justify-center gap-3 text-xs">
-        {phases.map((phase) => (
+        {decorated.map((phase) => (
           <div key={phase.key} className="flex items-center gap-2 text-slate-200">
             <span
               className="h-2 w-2 rounded-full"
-              style={{ backgroundColor: phase.color }}
+              style={{ backgroundColor: phase.gradientColor }}
             />
             <span className="flex items-center gap-1">
               {phase.label}
@@ -362,24 +368,18 @@ export default function GasAnalyzer() {
     <div className="space-y-6">
       <PageHeader title="Gas Analyzer" />
 
-      <form
-        onSubmit={handleSubmit}
-        className="rounded-xl border border-slate-800 bg-[#151A28] p-4"
-      >
+      <form onSubmit={handleSubmit} className="surface-card p-6 space-y-3">
         <label className="text-xs uppercase tracking-wide text-slate-400">
           User Operation Hash
         </label>
         <div className="mt-2 flex flex-col gap-3 md:flex-row">
           <input
-            className="flex-1 rounded border border-slate-700 bg-[#0f1522] px-3 py-2 font-mono text-sm text-slate-100"
+            className="flex-1 rounded border border-slate-700 bg-slate-900/70 px-3 py-2 font-mono text-sm text-slate-100"
             placeholder="0x..."
             value={hashInput}
             onChange={(event) => setHashInput(event.target.value)}
           />
-          <button
-            type="submit"
-            className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-          >
+          <button type="submit" className="btn-primary">
             Analyze
           </button>
         </div>
@@ -389,7 +389,7 @@ export default function GasAnalyzer() {
       </form>
 
       {loading ? (
-        <div className="rounded-xl border border-slate-800 bg-[#151A28] p-4 text-sm text-slate-300">
+        <div className="surface-card p-4 text-sm text-slate-300">
           Loading gas analysis…
         </div>
       ) : null}
@@ -434,7 +434,7 @@ export default function GasAnalyzer() {
           </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-xl border border-slate-800 bg-[#151A28] p-6">
+            <div className="surface-card p-6">
               <h3 className="text-sm font-semibold text-slate-200">
                 Phase Distribution
               </h3>
@@ -445,7 +445,7 @@ export default function GasAnalyzer() {
                 <GasDonut phases={summary.phases} />
               </div>
             </div>
-            <div className="rounded-xl border border-slate-800 bg-[#151A28] p-6 space-y-4">
+            <div className="surface-card surface-card--muted p-6 space-y-4">
               <h3 className="text-sm font-semibold text-slate-200">
                 Limits vs Usage
               </h3>
@@ -489,7 +489,7 @@ export default function GasAnalyzer() {
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-800 bg-[#151A28] p-6">
+          <div className="surface-card p-6">
             <h3 className="text-sm font-semibold text-slate-200">Details</h3>
             <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               <DetailItem label="UserOp Hash" value={gas?.userOpHash ?? "-"} />
@@ -522,8 +522,8 @@ function SummaryCard({
   sublabel?: string;
 }) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-[#151A28] p-4">
-      <div className="text-xs uppercase tracking-wide text-slate-400">
+    <div className="surface-card p-4">
+      <div className="text-xs uppercase tracking-[0.3em] text-slate-500">
         {label}
       </div>
       <div className="mt-2 text-2xl font-semibold text-slate-100">{value}</div>

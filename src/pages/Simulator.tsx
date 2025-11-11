@@ -34,7 +34,7 @@ function PrimaryButton({ children, onClick, disabled }: ButtonProps) {
     <button
       onClick={onClick}
       disabled={disabled}
-      className="rounded bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+      className="btn-primary"
     >
       {children}
     </button>
@@ -46,7 +46,7 @@ function SecondaryButton({ children, onClick, disabled }: ButtonProps) {
     <button
       onClick={onClick}
       disabled={disabled}
-      className="rounded border border-indigo-500 px-3 py-2 text-sm font-medium text-indigo-300 hover:bg-indigo-500/10 disabled:opacity-60"
+      className="btn-secondary"
     >
       {children}
     </button>
@@ -72,6 +72,13 @@ type SimulationResult = {
   message?: string;
   raw?: any;
   note?: string;
+};
+
+type PaymasterFields = {
+  paymaster?: `0x${string}`;
+  paymasterData?: `0x${string}`;
+  paymasterVerificationGasLimit?: bigint;
+  paymasterPostOpGasLimit?: bigint;
 };
 
 const ENTRY_POINT_ABI = parseAbi([
@@ -392,15 +399,39 @@ type SimulationCardConfig = {
         paymasterAndData: _preparedPaymasterAndData,
         initCode: preparedInitCode,
         ...preparedOperation
-      } = prepared;
+      } = prepared as typeof prepared & {
+        account?: unknown;
+        paymasterAndData?: `0x${string}`;
+        initCode?: `0x${string}`;
+      };
 
-      const sanitizedPreparedOperation = preparedInitCode && preparedInitCode !== ("0x" as `0x${string}`)
-        ? { ...preparedOperation, initCode: preparedInitCode }
-        : { ...preparedOperation };
+      const sanitizedPreparedOperation =
+        preparedInitCode && preparedInitCode !== ("0x" as `0x${string}`)
+          ? { ...preparedOperation, initCode: preparedInitCode }
+          : { ...preparedOperation };
+
+      const {
+        factory: _preparedFactory,
+        factoryData: _preparedFactoryData,
+        paymaster: _preparedPaymaster,
+        paymasterData: _preparedPaymasterData,
+        paymasterVerificationGasLimit: _preparedPaymasterVerificationGasLimit,
+        paymasterPostOpGasLimit: _preparedPaymasterPostOpGasLimit,
+        ...paymasterReadyOperation
+      } = sanitizedPreparedOperation as typeof sanitizedPreparedOperation & {
+        factory?: `0x${string}`;
+        factoryData?: `0x${string}`;
+        paymaster?: `0x${string}`;
+        paymasterData?: `0x${string}`;
+        paymasterVerificationGasLimit?: bigint;
+        paymasterPostOpGasLimit?: bigint;
+      };
 
       const paymasterClient = getPaymasterClient(token);
       const useDecorator = preset === "AA21_PAYMASTER_PREFUND" && mode === "bad";
-      let baseOp = { ...sanitizedPreparedOperation };
+      let baseOp = {
+        ...paymasterReadyOperation,
+      } as typeof paymasterReadyOperation & PaymasterFields;
 
       if (useDecorator) {
         console.debug(
@@ -408,7 +439,7 @@ type SimulationCardConfig = {
         );
       } else {
         const paymasterStub = await paymasterClient.getPaymasterStubData({
-          ...sanitizedPreparedOperation,
+          ...paymasterReadyOperation,
           entryPointAddress: form.entryPoint as `0x${string}`,
           chainId,
           context: {
@@ -418,16 +449,16 @@ type SimulationCardConfig = {
         });
 
         baseOp = {
-          ...sanitizedPreparedOperation,
+          ...paymasterReadyOperation,
           paymaster: paymasterStub.paymaster,
           paymasterData: paymasterStub.paymasterData,
           paymasterVerificationGasLimit:
             paymasterStub.paymasterVerificationGasLimit,
           paymasterPostOpGasLimit: paymasterStub.paymasterPostOpGasLimit,
-        };
+        } as typeof paymasterReadyOperation & PaymasterFields;
 
         const paymasterData = await paymasterClient.getPaymasterData({
-          ...baseOp,
+          ...paymasterReadyOperation,
           entryPointAddress: form.entryPoint as `0x${string}`,
           chainId,
           context: {
@@ -589,7 +620,7 @@ type SimulationCardConfig = {
     <div className="space-y-6">
       <PageHeader title="Simulator" />
 
-      <section className="rounded-xl border border-slate-800 bg-[#151A28] p-4 space-y-4">
+      <section className="surface-card space-y-4 p-6">
         <h3 className="text-sm font-semibold text-slate-200">
           Base Configuration
         </h3>
@@ -646,7 +677,7 @@ type SimulationCardConfig = {
           return (
             <div
               key={card.preset}
-              className="rounded-xl border border-slate-800 bg-[#151A28] p-4 space-y-3"
+              className="surface-card surface-card--muted space-y-3 p-5"
             >
               <div>
                 <div className="text-sm font-semibold text-slate-200">
@@ -948,7 +979,7 @@ function ResultPanel({
       ? "text-rose-400"
       : "text-slate-300";
   return (
-    <div className="rounded border border-slate-700 bg-[#0f1422] p-3 text-xs text-slate-200">
+    <div className="surface-card surface-card--muted p-4 text-xs text-slate-200">
       <div className="font-semibold">{title}</div>
       <div className="mt-1">
         Status: <span className={statusClass}>{result.status}</span>

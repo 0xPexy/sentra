@@ -13,6 +13,7 @@ import { parseSelectorEntries } from "../lib/selectors";
 import type { SelectorEntry } from "../lib/selectors";
 import { useAuth } from "../state/auth";
 import PageHeader from "../components/layout/PageHeader";
+import { RemoveButton } from "../components/ui/RemoveButton";
 import { isEthAddress } from "../lib/address";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
@@ -127,7 +128,7 @@ export default function DashboardConfig() {
     <div className="space-y-8">
       <PageHeader title="Configuration" />
       {loading && (
-        <div className="rounded-lg border border-slate-800 bg-[#0f1422] p-4 text-sm text-slate-400">
+        <div className="surface-card surface-card--muted p-4 text-sm text-slate-400">
           Loading paymaster configuration…
         </div>
       )}
@@ -339,7 +340,7 @@ function PaymasterCard({
   };
 
   return (
-    <section className="space-y-4 rounded-xl border border-slate-800 bg-[#151A28] p-4">
+    <section className="surface-card space-y-4 p-6">
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">Paymaster</h3>
         <span
@@ -374,7 +375,7 @@ function PaymasterCard({
                 <button
                   onClick={save}
                   disabled={saving || !addressValid}
-                  className="rounded bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500 disabled:opacity-60"
+                  className="btn-primary"
                 >
                   {saving ? "Saving…" : "Save"}
                 </button>
@@ -384,7 +385,7 @@ function PaymasterCard({
                       setAddr(pm?.address ?? "");
                       setEditing(false);
                     }}
-                    className="rounded border border-slate-700 px-3 py-2 text-sm hover:bg-slate-800"
+                    className="btn-ghost"
                   >
                     Cancel
                   </button>
@@ -397,7 +398,7 @@ function PaymasterCard({
                 </span>
                 <button
                   onClick={() => setEditing(true)}
-                  className="rounded border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800"
+                  className="btn-secondary text-xs"
                 >
                   Edit
                 </button>
@@ -425,17 +426,14 @@ function PaymasterCard({
           </span>
           <button
             onClick={deposit}
-            className="rounded border border-slate-700 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
+            className="btn-secondary"
           >
             Add
           </button>
-          <button
+          <RemoveButton
             onClick={withdraw}
             disabled={!depositWei || depositWei === 0n}
-            className="rounded bg-red-900/40 px-3 py-1.5 text-sm font-medium text-red-200 hover:bg-red-900/60 disabled:opacity-60"
-          >
-            Remove
-          </button>
+          />
         </div>
       </div>
     </section>
@@ -551,7 +549,7 @@ function AllowlistCard({
   };
 
   return (
-    <section className="space-y-6 rounded-xl border border-slate-800 bg-[#151A28] p-4">
+    <section className="surface-card space-y-6 p-6">
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">Contract allowlist</h3>
       </div>
@@ -609,7 +607,7 @@ function AllowlistCard({
         <div className="flex items-end">
           <button
             onClick={addContract}
-            className="h-11 w-full rounded bg-indigo-600 px-3 text-sm font-medium hover:bg-indigo-500 disabled:opacity-60"
+            className="btn-primary h-11 w-full"
             disabled={
               disabled ||
               !contractAddressValid ||
@@ -621,7 +619,7 @@ function AllowlistCard({
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-slate-800 bg-[#0f1422]">
+      <div className="surface-card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-900/60 text-left text-xs uppercase tracking-wide text-slate-400">
             <tr>
@@ -669,18 +667,16 @@ function AllowlistCard({
                       <div className="flex flex-nowrap gap-2 ml-auto">
                         <button
                           onClick={() => editFunctions(contract)}
-                          className="rounded border border-slate-700 px-3 py-1.5 text-xs font-medium hover:bg-slate-800 disabled:opacity-60"
+                          className="btn-secondary text-xs"
                           disabled={disabled}
                         >
                           Edit
                         </button>
-                        <button
+                        <RemoveButton
                           onClick={() => delContract(contract.id)}
-                          className="rounded bg-red-900/40 px-3 py-1.5 text-xs font-medium text-red-200 hover:bg-red-900/60 disabled:opacity-60"
                           disabled={disabled}
-                        >
-                          Remove
-                        </button>
+                          className="text-xs"
+                        />
                       </div>
                     </div>
                   </td>
@@ -749,7 +745,7 @@ function UserWhitelistCard({
   };
 
   return (
-    <section className="space-y-4 rounded-xl border border-slate-800 bg-[#151A28] p-4">
+    <section className="surface-card space-y-4 p-6">
       <h3 className="font-semibold">Allowed accounts</h3>
 
       <div className="flex items-center gap-2 max-w-xl">
@@ -765,14 +761,14 @@ function UserWhitelistCard({
         />
         <button
           onClick={add}
-          className="rounded bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500 disabled:opacity-60"
+          className="btn-primary"
           disabled={disabled || !senderValid}
         >
           Add
         </button>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-slate-800 bg-[#0f1422]">
+      <div className="surface-card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-900/60 text-left text-xs uppercase tracking-wide text-slate-400">
             <tr>
@@ -785,13 +781,11 @@ function UserWhitelistCard({
                 <td className="p-3 font-mono max-w-[280px]">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate">{user}</span>
-                    <button
+                    <RemoveButton
                       onClick={() => remove(user)}
-                      className="rounded bg-red-900/40 px-2 py-1 text-[11px] font-medium text-red-200 hover:bg-red-900/60 disabled:opacity-60"
                       disabled={disabled}
-                    >
-                      Remove
-                    </button>
+                      className="text-[11px] px-3 py-1"
+                    />
                   </div>
                 </td>
               </tr>

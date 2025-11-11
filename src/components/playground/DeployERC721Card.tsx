@@ -38,9 +38,6 @@ export function DeployERC721Card({
 
   const [status, setStatus] = useState<string>("");
   const [loading, setLoading] = useState(false);
-  const [successInfo, setSuccessInfo] = useState<DeployResult | null>(
-    storedState.lastDeploy ?? null
-  );
 
   useEffect(() => {
     if (storedState.minter) {
@@ -49,7 +46,6 @@ export function DeployERC721Card({
   }, [storedState.minter]);
 
   useEffect(() => {
-    setSuccessInfo(storedState.lastDeploy ?? null);
     if (storedState.lastDeploy) {
       setStatus(
         `contract: ${storedState.lastDeploy.address}` +
@@ -57,6 +53,8 @@ export function DeployERC721Card({
             ? `\nallowlisted minter: ${storedState.lastDeploy.minter}`
             : "")
       );
+    } else {
+      setStatus("");
     }
   }, [storedState.lastDeploy]);
 
@@ -124,7 +122,6 @@ export function DeployERC721Card({
   const deploy = async () => {
     setLoading(true);
     setStatus("");
-    setSuccessInfo(null);
 
     if (!token) {
       window.alert("Sign in to deploy contracts.");
@@ -203,8 +200,6 @@ export function DeployERC721Card({
         address: receipt.contractAddress,
         minter: minterAddress,
       };
-      setSuccessInfo(deployInfo);
-
       updateStoredState({
         name,
         symbol,
@@ -221,7 +216,7 @@ export function DeployERC721Card({
   };
 
   return (
-    <section className="space-y-4 rounded-xl border border-slate-800 bg-[#151A28] p-4">
+    <section className="surface-card space-y-4 p-6">
       <div className="flex items-center justify-between gap-2">
         <h3 className="font-semibold">Deploy ERC721Mintable</h3>
         <div className="text-xs text-slate-400">
@@ -291,22 +286,13 @@ export function DeployERC721Card({
       <button
         onClick={deploy}
         disabled={loading || !artifact}
-        className="rounded bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+        className="btn-primary"
       >
         {loading ? "Deploying…" : "Deploy"}
       </button>
 
-      {successInfo && (
-        <div className="rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-200">
-          <div>Contract: {successInfo.address}</div>
-          {successInfo.minter && (
-            <div>Minter allowlisted: {successInfo.minter}</div>
-          )}
-        </div>
-      )}
-
       {status && (
-        <pre className="whitespace-pre-wrap rounded border border-slate-800 bg-[#0f1422] p-3 text-xs text-slate-200">
+        <pre className="whitespace-pre-wrap surface-card surface-card--muted border border-slate-800 p-3 text-xs text-slate-200">
           {status}
         </pre>
       )}

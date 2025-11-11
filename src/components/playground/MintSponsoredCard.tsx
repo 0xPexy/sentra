@@ -1,4 +1,5 @@
-import { ChangeEvent, useEffect, useState } from "react";
+import type { ChangeEvent } from "react";
+import { useEffect, useState } from "react";
 import { encodeFunctionData } from "viem";
 import { useAuth } from "../../state/auth";
 import { api, type PaymasterResponse } from "../../lib/api";
@@ -318,7 +319,7 @@ export function MintSponsoredCard({
   };
 
   return (
-    <section className="space-y-4 rounded-xl border border-slate-800 bg-[#151A28] p-4">
+    <section className="surface-card space-y-4 p-6">
       <h3 className="font-semibold">Mint ERC721Mintable (Sponsored)</h3>
       <div className="grid gap-3 md:grid-cols-3">
         <div className="md:col-span-3">
@@ -368,20 +369,20 @@ export function MintSponsoredCard({
       <div className="flex items-center gap-3">
         <button
           onClick={sendUserOperation}
-          className="rounded bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500"
+          className="btn-primary"
         >
           Send
         </button>
         <button
           onClick={addToMetaMask}
-          className="rounded border border-indigo-500 px-3 py-2 text-sm font-medium text-indigo-300 hover:bg-indigo-500/10"
+          className="btn-secondary"
         >
           Import to MetaMask
         </button>
       </div>
 
       {status && (
-        <pre className="whitespace-pre-wrap rounded border border-slate-800 bg-[#0f1422] p-3 text-xs text-slate-200">
+        <pre className="surface-card surface-card--muted whitespace-pre-wrap p-3 text-xs text-slate-200">
           {status}
         </pre>
       )}

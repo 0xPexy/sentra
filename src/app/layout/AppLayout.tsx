@@ -2,16 +2,30 @@ import { Outlet, NavLink } from "react-router-dom";
 
 export default function AppLayout() {
   return (
-    <div className="min-h-screen bg-[#0A0E17] text-slate-100 flex">
-      <aside className="w-64 bg-[#151A28] border-r border-slate-800">
-        <div className="p-4 text-xl font-semibold">Sentra</div>
-        <nav className="flex flex-col gap-1 p-2">
+    <div
+      className="min-h-screen text-slate-100 flex"
+      style={{ backgroundColor: "var(--color-bg)" }}
+    >
+      <aside className="w-64 border-r border-slate-800 bg-[rgba(10,15,30,0.85)] backdrop-blur-xl">
+        <div
+          className="p-4 text-2xl font-black tracking-[0.5em]"
+          style={{
+            color: "transparent",
+            backgroundImage: "var(--gradient-brand)",
+            WebkitBackgroundClip: "text",
+          }}
+        >
+          SENTRA
+        </div>
+        <nav className="flex flex-col gap-2 p-3">
           <NavLink
             to="/"
             end
             className={({ isActive }) =>
-              `px-3 py-2 rounded ${
-                isActive ? "bg-slate-800" : "hover:bg-slate-800/50"
+              `rounded-full px-4 py-2 text-sm font-medium transition ${
+                isActive
+                  ? "bg-white/10 text-white"
+                  : "text-slate-400 hover:bg-white/5"
               }`
             }
           >
@@ -20,8 +34,10 @@ export default function AppLayout() {
           <NavLink
             to="/gas"
             className={({ isActive }) =>
-              `px-3 py-2 rounded ${
-                isActive ? "bg-slate-800" : "hover:bg-slate-800/50"
+              `rounded-full px-4 py-2 text-sm font-medium transition ${
+                isActive
+                  ? "bg-white/10 text-white"
+                  : "text-slate-400 hover:bg-white/5"
               }`
             }
           >
@@ -30,8 +46,10 @@ export default function AppLayout() {
           <NavLink
             to="/config"
             className={({ isActive }) =>
-              `px-3 py-2 rounded ${
-                isActive ? "bg-slate-800" : "hover:bg-slate-800/50"
+              `rounded-full px-4 py-2 text-sm font-medium transition ${
+                isActive
+                  ? "bg-white/10 text-white"
+                  : "text-slate-400 hover:bg-white/5"
               }`
             }
           >
@@ -40,8 +58,10 @@ export default function AppLayout() {
           <NavLink
             to="/playground"
             className={({ isActive }) =>
-              `px-3 py-2 rounded ${
-                isActive ? "bg-slate-800" : "hover:bg-slate-800/50"
+              `rounded-full px-4 py-2 text-sm font-medium transition ${
+                isActive
+                  ? "bg-white/10 text-white"
+                  : "text-slate-400 hover:bg-white/5"
               }`
             }
           >
@@ -50,8 +70,10 @@ export default function AppLayout() {
           <NavLink
             to="/simulator"
             className={({ isActive }) =>
-              `px-3 py-2 rounded ${
-                isActive ? "bg-slate-800" : "hover:bg-slate-800/50"
+              `rounded-full px-4 py-2 text-sm font-medium transition ${
+                isActive
+                  ? "bg-white/10 text-white"
+                  : "text-slate-400 hover:bg-white/5"
               }`
             }
           >

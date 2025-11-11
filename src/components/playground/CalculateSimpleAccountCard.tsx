@@ -210,7 +210,7 @@ export function CalculateSimpleAccountCard({
   ]);
 
   return (
-    <section className="space-y-4 rounded-xl border border-slate-800 bg-[#151A28] p-4">
+    <section className="surface-card space-y-4 p-6">
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">SimpleAccount Address</h3>
       </div>
@@ -257,14 +257,14 @@ export function CalculateSimpleAccountCard({
         <button
           onClick={calculate}
           disabled={loading}
-          className="rounded bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500 disabled:opacity-60"
+          className="btn-primary"
         >
           {loading ? "Calculating…" : "Calculate"}
         </button>
       </div>
 
       {status && (
-        <pre className="whitespace-pre-wrap rounded border border-slate-800 bg-[#0f1422] p-3 text-xs text-slate-200">
+        <pre className="surface-card surface-card--muted whitespace-pre-wrap p-3 text-xs text-slate-200">
           {status}
         </pre>
       )}

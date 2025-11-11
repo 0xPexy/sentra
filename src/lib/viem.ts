@@ -82,7 +82,9 @@ export function formatWeiToEth(value: bigint) {
   return formatEther(value);
 }
 
-let cachedHttpClient: ReturnType<typeof createPublicClient> | null = null;
+let cachedHttpClient:
+  | PublicClient<Transport, typeof tenderlyTestNet, undefined>
+  | null = null;
 
 
 export function getPublicClient() {
@@ -93,7 +95,11 @@ export function getPublicClient() {
         "VITE_RPC_URL must be defined when no wallet provider is available"
       );
     }
-    cachedHttpClient = createPublicClient({
+    cachedHttpClient = createPublicClient<
+      Transport,
+      typeof tenderlyTestNet,
+      undefined
+    >({
       chain: tenderlyTestNet,
       transport: http(rpcUrl),
     });
@@ -101,7 +107,9 @@ export function getPublicClient() {
   return cachedHttpClient;
 }
 
-export async function getWalletClient() {
+export async function getWalletClient(): Promise<
+  WalletClient<Transport, typeof tenderlyTestNet, Account>
+> {
   const eth = (window as any).ethereum;
   if (!eth) throw new Error("No wallet (window.ethereum) found");
 
@@ -112,7 +120,7 @@ export async function getWalletClient() {
     throw new Error("Wallet did not return an address");
   }
 
-  return createWalletClient({
+  return createWalletClient<Transport, typeof tenderlyTestNet, Account>({
     account: address,
     chain: tenderlyTestNet,
     transport: custom(eth),
@@ -189,8 +197,8 @@ export function getBundlerClient(chainId?: number) {
 
 export async function getSimpleSmartAccount(
   address: `0x${string}`,
-  publicClient: PublicClient,
-  walletClient: WalletClient<Transport, Chain | undefined, Account>,
+  publicClient: PublicClient<Transport, typeof tenderlyTestNet, undefined>,
+  walletClient: WalletClient<Transport, typeof tenderlyTestNet, Account>,
   factoryAddress: `0x${string}`,
   salt: bigint = 0n
 ) {

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { useAuth } from "../../state/auth";
@@ -34,18 +35,19 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
     selected?.status?.toLowerCase() === "success" ? false : Boolean(revertMessage);
 
   return (
-    <div className="bg-[#151A28] border border-slate-800 rounded-xl overflow-hidden">
-      <table className="w-full text-base">
-        <thead className="bg-slate-900/60 text-sm uppercase tracking-wide text-slate-400">
-          <tr>
-            <th className="text-left p-4">UserOp</th>
-            <th className="text-left p-4">Sender</th>
-            <th className="text-left p-4">Target</th>
-            <th className="text-left p-4">Selector</th>
-            <th className="text-left p-4">Status</th>
-            <th className="text-left p-4">Time</th>
-          </tr>
-        </thead>
+    <div className="surface-card">
+      <div className="overflow-x-auto">
+        <table className="table-modern text-sm">
+          <thead>
+            <tr>
+              <th className="text-left">UserOp</th>
+              <th className="text-left">Sender</th>
+              <th className="text-left">Target</th>
+              <th className="text-left">Selector</th>
+              <th className="text-left">Status</th>
+              <th className="text-left">Time</th>
+            </tr>
+          </thead>
         <tbody>
           {rows.map((r, index) => {
             const userOpHash = r.userOpHash ?? "";
@@ -53,14 +55,15 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
             const target = r.target ?? "";
             const selector = r.selector ?? "";
             const status = r.status ?? "-";
+            const normalizedStatus = status ? status.toUpperCase() : "-";
             const time = r.timestamp ? new Date(r.timestamp).toLocaleString() : "-";
 
             const key = userOpHash || `${sender}:${target}:${index}`;
 
             return (
-              <tr key={key} className="border-t border-slate-800 text-base">
+              <tr key={key} className="text-sm">
                 <td
-                  className="p-4 font-mono text-indigo-400 hover:text-indigo-200 cursor-pointer"
+                  className="font-mono text-indigo-300 hover:text-indigo-100 cursor-pointer"
                   onClick={() => {
                     setSelected(r);
                     setDetail(null);
@@ -102,15 +105,15 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
                 >
                   {userOpHash ? `${userOpHash.slice(0, 12)}…` : "-"}
                 </td>
-                <td className="p-4 font-mono">
+                <td className="font-mono">
                   {sender ? `${sender.slice(0, 12)}…` : "-"}
                 </td>
-                <td className="p-4 font-mono">
+                <td className="font-mono">
                   {target ? `${target.slice(0, 12)}…` : "-"}
                 </td>
-                <td className="p-4 font-mono">{selector}</td>
+                <td className="font-mono">{selector}</td>
                 <td
-                  className={`p-4 font-semibold ${
+                  className={`font-semibold ${
                     status.toLowerCase() === "success"
                       ? "text-emerald-400"
                       : status.toLowerCase() === "failed"
@@ -118,17 +121,19 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
                       : "text-slate-300"
                   }`}
                 >
-                  {status}
+                  {normalizedStatus}
                 </td>
-                <td className="p-4">{time}</td>
+                <td>{time}</td>
               </tr>
             );
           })}
         </tbody>
       </table>
-      {selected ? (
+    </div>
+    {selected &&
+      createPortal(
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/95"
           onClick={() => {
             setSelected(null);
             setDetail(null);
@@ -136,7 +141,7 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
           }}
         >
           <div
-            className="w-full max-w-2xl rounded-xl border border-slate-700 bg-[#0f1522] p-6 shadow-2xl"
+            className="modal-card w-full max-w-2xl p-6"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between">
@@ -144,7 +149,7 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
                 User Operation Details
               </h3>
               <button
-                className="text-slate-400 hover:text-slate-200"
+                className="btn-ghost px-2 py-1 text-xs"
                 onClick={() => {
                   setSelected(null);
                   setDetail(null);
@@ -160,7 +165,10 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
               <DetailRow label="Sender" value={selected.sender ?? "-"} />
               <DetailRow label="Target" value={selected.target ?? "-"} />
               <DetailRow label="Selector" value={selected.selector ?? "-"} />
-              <DetailRow label="Status" value={selected.status ?? "-"} />
+              <DetailRow
+                label="Status"
+                value={selected.status ? selected.status.toUpperCase() : "-"}
+              />
               <DetailRow
                 label="Block Number"
                 value={blockNumberDisplay ? blockNumberDisplay.toString() : "-"}
@@ -189,13 +197,13 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
               {selected.userOpHash ? (
                 <Link
                   to={`/gas?hash=${selected.userOpHash}`}
-                  className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+                  className="btn-primary"
                 >
                   Analyze Gas
                 </Link>
               ) : null}
               <button
-                className="rounded border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:border-slate-400 hover:text-slate-100"
+                className="btn-secondary"
                 onClick={() => {
                   setSelected(null);
                   setDetail(null);
@@ -206,8 +214,9 @@ export default function TxTable({ rows }: { rows: Tx[] }) {
               </button>
             </div>
           </div>
-        </div>
-      ) : null}
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

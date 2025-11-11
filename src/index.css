@@ -1,14 +1,170 @@
 @import "tailwindcss";
 
-html,
-body,
-#root {
-  min-height: 100%;
-  margin: 0;
-  background-color: #0A0E17;
+@layer base {
+  :root {
+    --color-bg: #030712;
+    --color-surface: rgba(12, 17, 29, 0.92);
+    --color-border: rgba(148, 163, 184, 0.15);
+    --color-border-strong: rgba(148, 163, 184, 0.35);
+    --color-text: #e2e8f0;
+    --color-muted: #94a3b8;
+    --gradient-brand: linear-gradient(135deg, #9945ff 0%, #14f195 100%);
+    --shadow-surface: 0 20px 60px rgba(0, 0, 0, 0.35);
+    --shadow-ring: 0 0 0 1px rgba(99, 102, 241, 0.35);
+    --radius-lg: 20px;
+    --radius-md: 14px;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+    margin: 0;
+    background-color: var(--color-bg);
+  }
+
+  body {
+    color: var(--color-text);
+    font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overscroll-behavior: none;
+    background-image: radial-gradient(circle at top, rgba(20, 241, 149, 0.08), transparent 50%),
+      radial-gradient(circle at 20% 20%, rgba(153, 69, 255, 0.06), transparent 45%);
+    background-attachment: fixed;
+  }
 }
 
-body {
-  color: #e2e8f0;
-  overscroll-behavior: none;
+@layer components {
+  .surface-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-surface);
+    backdrop-filter: blur(18px);
+  }
+
+  .surface-card--muted {
+    background: rgba(12, 17, 29, 0.76);
+    border-color: rgba(148, 163, 184, 0.12);
+  }
+
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.55rem 1.1rem;
+    border-radius: 999px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+
+  .btn-primary:disabled,
+  .btn-secondary:disabled,
+  .btn-ghost:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background-image: var(--gradient-brand);
+    color: #05070f;
+    box-shadow: 0 10px 30px rgba(20, 241, 149, 0.25);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 15px 35px rgba(20, 241, 149, 0.35);
+  }
+
+  .btn-secondary {
+    background: rgba(15, 23, 42, 0.8);
+    border-color: rgba(148, 163, 184, 0.35);
+    color: var(--color-text);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    border-color: rgba(148, 163, 184, 0.55);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    border-color: rgba(148, 163, 184, 0.25);
+    color: var(--color-muted);
+    cursor: pointer;
+  }
+
+  .btn-danger {
+    background: rgba(244, 63, 94, 0.15);
+    border-color: rgba(244, 63, 94, 0.4);
+    color: #f87171;
+    cursor: pointer;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    border-color: rgba(244, 63, 94, 0.6);
+    background: rgba(244, 63, 94, 0.2);
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+  }
+
+  .badge-success {
+    background: rgba(34, 197, 94, 0.15);
+    border-color: rgba(34, 197, 94, 0.4);
+    color: #4ade80;
+  }
+
+  .badge-danger {
+    background: rgba(244, 63, 94, 0.15);
+    border-color: rgba(244, 63, 94, 0.4);
+    color: #fb7185;
+  }
+
+  .table-modern {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .table-modern thead tr {
+    background: rgba(15, 23, 42, 0.85);
+  }
+
+  .table-modern th {
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    padding: 0.9rem 1rem;
+  }
+
+  .table-modern td {
+    padding: 0.9rem 1rem;
+    border-top: 1px solid rgba(148, 163, 184, 0.1);
+  }
+
+  .table-modern tbody tr:hover {
+    background: rgba(148, 163, 184, 0.05);
+  }
+
+  .modal-card {
+    background: #050a13;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border-strong);
+    box-shadow: 0 30px 80px rgba(3, 7, 18, 0.65);
+  }
 }

@@ -12,13 +12,13 @@ export default function StatCard({
   className,
 }: StatCardProps) {
   return (
-    <div
-      className={`bg-[#151A28] border border-slate-800 rounded-xl p-4 ${className ?? ""}`}
-    >
-      <div className="text-slate-400 text-sm">{label}</div>
-      <div className="mt-1 text-2xl font-semibold">{value}</div>
+    <div className={`surface-card p-5 ${className ?? ""}`}>
+      <div className="text-[0.8rem] font-semibold uppercase tracking-[0.12em] text-slate-400">
+        {label}
+      </div>
+      <div className="mt-2 text-3xl font-semibold text-white">{value}</div>
       {sublabel ? (
-        <div className="mt-1 text-xs text-slate-500">{sublabel}</div>
+        <div className="mt-1 text-xs text-slate-400">{sublabel}</div>
       ) : null}
     </div>
   );
