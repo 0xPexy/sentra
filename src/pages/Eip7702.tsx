@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { createWalletClient, encodeFunctionData, http } from "viem";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { encodeFunctionData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { toSimpleSmartAccount } from "permissionless/accounts";
 import PageHeader from "../components/layout/PageHeader";
@@ -7,7 +7,6 @@ import { usePlaygroundStoredState } from "../hooks/usePlaygroundStoredState";
 import { useAuth } from "../state/auth";
 import { ApiError, api, type PaymasterResponse } from "../lib/api";
 import {
-  ENTRYPOINT_ABI,
   getBundlerClientBySimpleAccount,
   getPaymasterClient,
   getPublicClient,
@@ -21,6 +20,8 @@ import {
 import { toSelector } from "../lib/selectors";
 import { isEthAddress } from "../lib/address";
 import type { SignedAuthorization } from "viem";
+import { recoverAuthorizationAddress } from "viem/utils";
+import type { SmartAccount } from "viem/account-abstraction";
 
 const USDC_ADDRESS =
   "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as `0x${string}`;
@@ -31,7 +32,6 @@ const DEFAULT_MAX_FEE = 30n * GWEI;
 const DEFAULT_CALL_GAS_LIMIT = 1_000_000n;
 const DEFAULT_PRE_VERIFICATION_GAS = 1_000_000n;
 const DEFAULT_VERIFICATION_GAS_LIMIT = 500_000n;
-const TYPE4_GAS_LIMIT = 3_000_000n;
 const DEMO_AUTH_PRIVATE_KEY =
   "0x6b1d4d8a1eef2711a2c626b7338f2c1fe814f81a79a3d4a7f0c1d6b7e9a4c5f6" as const;
 const SIMPLE_7702_ACCOUNT =
@@ -49,18 +49,6 @@ const ERC20_APPROVE_ABI = [
     outputs: [{ name: "", type: "bool" }],
   },
 ] as const;
-
-type Type4Preview = {
-  type: "eip7702";
-  from: `0x${string}`;
-  chainId: number;
-  to: `0x${string}`;
-  data: `0x${string}`;
-  authorizationList: SignedAuthorization[];
-  maxFeePerGas: bigint;
-  maxPriorityFeePerGas: bigint;
-  gas: bigint;
-};
 
 export default function Eip7702() {
   const { storedState } = usePlaygroundStoredState();
@@ -84,7 +72,7 @@ export default function Eip7702() {
   const [nonceInput, setNonceInput] = useState("");
   const [authorization, setAuthorization] =
     useState<SignedAuthorization | null>(null);
-  const [type4Preview, setType4Preview] = useState<Type4Preview | null>(null);
+  const [preparedOp, setPreparedOp] = useState<any | null>(null);
   const [authStatus, setAuthStatus] = useState("");
   const [payloadStatus, setPayloadStatus] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
@@ -96,6 +84,7 @@ export default function Eip7702() {
   const [allowlistStatus, setAllowlistStatus] = useState("");
   const [allowlistLoading, setAllowlistLoading] = useState(false);
   const [submitStatus, setSubmitStatus] = useState("");
+  const smartAccountRef = useRef<SmartAccount | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -135,7 +124,7 @@ export default function Eip7702() {
 
   const handleSignAuthorization = useCallback(async () => {
     setAuthorization(null);
-    setType4Preview(null);
+    setPreparedOp(null);
     setAuthStatus("");
     setAuthorizationOwner(null);
     setAuthLoading(true);
@@ -164,6 +153,15 @@ export default function Eip7702() {
       });
       setAuthorization(signature);
       setAuthorizationOwner(account.address);
+      try {
+        const recovered = await recoverAuthorizationAddress({
+          authorization: signature,
+        } as any);
+        console.log("[7702] recovered signer =", recovered, "expected =", account.address);
+        console.log("[7702] serialized tuple =", serializeAuthorizationForDebug(signature));
+      } catch (e) {
+        console.log("[7702] recoverAuthorizationAddress failed", e);
+      }
       setAuthStatus(
         "Authorization signed. Copy the payload below for the Type-4 transaction."
       );
@@ -218,8 +216,8 @@ export default function Eip7702() {
   }, [demoAuthorizationAccount.address, token]);
 
 
-  const handlePrepareType4 = useCallback(async () => {
-    setType4Preview(null);
+  const handlePrepareUserOperation = useCallback(async () => {
+    setPreparedOp(null);
     setPayloadStatus("");
     if (!authorization) {
       setPayloadStatus("Sign an EIP-7702 authorization first.");
@@ -247,6 +245,18 @@ export default function Eip7702() {
         accountLogicAddress: SIMPLE_7702_ACCOUNT,
       });
       const bundler = getBundlerClientBySimpleAccount(smartAccount);
+      console.log("[7702] using sender (EOA)", eoaOwner);
+      try {
+        if (authorization) {
+          const recovered = await recoverAuthorizationAddress({
+            authorization,
+          } as any);
+          console.log("[7702] recovered signer before UO =", recovered, "sender =", eoaOwner);
+        }
+      } catch (e) {
+        console.log("[7702] recoverAuthorizationAddress (before UO) failed", e);
+      }
+      const eoaSender = demoAuthorizationAccount.address as `0x${string}`;
 
       const approveData = encodeFunctionData({
         abi: ERC20_APPROVE_ABI,
@@ -262,12 +272,27 @@ export default function Eip7702() {
         maxFeePerGas: DEFAULT_MAX_FEE,
         maxPriorityFeePerGas: DEFAULT_MAX_PRIORITY_FEE,
       });
+      const preparedSanitized: any = { ...prepared };
+      const hadFactory = 'factory' in preparedSanitized || 'factoryData' in preparedSanitized;
+      delete preparedSanitized.factory;
+      delete preparedSanitized.factoryData;
+      delete preparedSanitized.initCode;
+      // Remove any stub/dummy 7702 fields that bundler might have attached.
+      const hadAuthStub = 'authorization' in preparedSanitized || 'eip7702Auth' in preparedSanitized;
+      delete preparedSanitized.authorization;
+      delete preparedSanitized.eip7702Auth;
+      if (hadFactory) console.log('[7702] removed factory/factoryData from prepared op');
+      if (hadAuthStub) console.log('[7702] removed stub authorization/eip7702Auth from prepared op');
+      const preparedWithSender = {
+        ...preparedSanitized,
+        sender: eoaSender,
+      };
       appendPayloadStatus("Bundler prepared baseline UserOperation.");
 
       const paymasterClient = getPaymasterClient(token);
       const chainId = resolvedChainId;
       const stub = await paymasterClient.getPaymasterStubData({
-        ...prepared,
+        ...preparedWithSender,
         entryPointAddress: entryPoint as `0x${string}`,
         chainId,
         context: {
@@ -277,7 +302,7 @@ export default function Eip7702() {
       });
 
       let sponsoredOp: any = {
-        ...prepared,
+        ...preparedWithSender,
         paymaster: stub.paymaster,
         paymasterData: stub.paymasterData,
         paymasterVerificationGasLimit: stub.paymasterVerificationGasLimit,
@@ -304,71 +329,69 @@ export default function Eip7702() {
       appendPayloadStatus("Paymaster attached sponsorship data.");
 
       const signature = await smartAccount.signUserOperation(sponsoredOp);
-      const packed = packOperation({
+      smartAccountRef.current = smartAccount;
+      const { authorization: _stubAuth, ...finalOp } = {
         ...sponsoredOp,
         signature,
-      });
-
-      const calldata = encodeFunctionData({
-        abi: ENTRYPOINT_ABI,
-        functionName: "handleOps",
-        args: [[packed], eoaOwner],
-      });
-
-      const preview: Type4Preview = {
-        type: "eip7702",
-        from: eoaOwner,
-        chainId,
-        to: entryPoint as `0x${string}`,
-        authorizationList: [authorization],
-        data: calldata as `0x${string}`,
-        maxFeePerGas: DEFAULT_MAX_FEE,
-        maxPriorityFeePerGas: DEFAULT_MAX_PRIORITY_FEE,
-        gas: TYPE4_GAS_LIMIT,
-      };
-
-      setType4Preview(preview);
-      setSubmitStatus("");
-      appendPayloadStatus(
-        "Type-4 payload ready. Send it via walletClient.sendTransaction({ ...preview })."
+      } as any;
+      // Many bundlers expect SerializedAuthorizationList (tuple) form.
+      // Build `authorization` (SignedAuthorization) – viem maps this to rpc.eip7702Auth.
+      const normalizedAuth = authorization
+        ? {
+            ...authorization,
+            address: (authorization as any).address?.toLowerCase?.() ?? authorization.address,
+          }
+        : null;
+      const opWithAuth = {
+        ...finalOp,
+        authorization: normalizedAuth ?? undefined,
+      } as any;
+      console.log("[7702] UO keys", Object.keys(opWithAuth));
+      console.log(
+        "[7702] has authorization =",
+        "authorization" in (opWithAuth as any),
+        "has authorizationList =",
+        "authorizationList" in (opWithAuth as any),
+        "has eip7702Auth =",
+        "eip7702Auth" in (opWithAuth as any)
       );
+      if (authorization) {
+        console.log("[7702] authorization object =", authorization);
+        console.log("[7702] serialized tuple =", serializeAuthorizationForDebug(authorization));
+      }
+      const dbgAuth = (opWithAuth as any).authorization;
+      console.log("[7702] final authorization =", dbgAuth);
+      setPreparedOp(opWithAuth);
+      setSubmitStatus("");
+      appendPayloadStatus("UserOperation ready with eip7702Auth.");
     } catch (error: any) {
       console.error(error);
       appendPayloadStatus(error?.message ?? String(error));
     } finally {
       setPayloadLoading(false);
     }
-  }, [
-    appendPayloadStatus,
-    approveSpender,
-    authorization,
-    entryPoint,
-    resolvedChainId,
-    token,
-  ]);
+  }, [appendPayloadStatus, approveSpender, authorization, entryPoint, resolvedChainId, token]);
 
-  const handleSubmitType4 = useCallback(async () => {
-    if (!type4Preview) {
-      setSubmitStatus("Prepare the Type-4 payload first.");
+  const handleSubmitUserOperation = useCallback(async () => {
+    if (!preparedOp) {
+      setSubmitStatus("Prepare the UserOperation first.");
+      return;
+    }
+    if (!smartAccountRef.current) {
+      setSubmitStatus("Smart account context missing. Re-run Step 2.");
       return;
     }
     setSubmitLoading(true);
-    setSubmitStatus("Submitting Type-4 transaction…");
+    setSubmitStatus("Submitting UserOperation via bundler…");
     try {
-      const rpcUrl = import.meta.env.VITE_RPC_URL;
-      if (!rpcUrl) throw new Error("VITE_RPC_URL is required to send txs.");
-      const wallet = createWalletClient({
-        account: demoAuthorizationAccount,
-        chain: tenderlyTestNet,
-        transport: http(rpcUrl),
-      });
-      const hash = await wallet.sendTransaction(type4Preview);
-      setSubmitStatus(`Submitted: ${hash}`);
-      const receipt = await getPublicClient().waitForTransactionReceipt({
-        hash,
-      });
+      const bundler = getBundlerClientBySimpleAccount(
+        smartAccountRef.current
+      );
+      const hash = await bundler.sendUserOperation(preparedOp);
+      setSubmitStatus(`UserOperation sent. Hash: ${hash}`);
+      const receipt = await bundler.waitForUserOperationReceipt({ hash });
       setSubmitStatus(
-        `Confirmed in block ${receipt.blockNumber}. Tx: ${hash}`
+        `UserOperation confirmed in block ${receipt.receipt.blockNumber}.`
       );
     } catch (error: any) {
       console.error(error);
@@ -376,7 +399,7 @@ export default function Eip7702() {
     } finally {
       setSubmitLoading(false);
     }
-  }, [demoAuthorizationAccount, type4Preview]);
+  }, [preparedOp]);
 
   return (
     <div className="space-y-6">
@@ -475,7 +498,7 @@ export default function Eip7702() {
               Step 2
             </div>
             <h3 className="text-lg font-semibold text-slate-50">
-              Build Sponsored Type-4 Transaction
+              Build Sponsored UserOperation
             </h3>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -489,11 +512,11 @@ export default function Eip7702() {
                 : "Allowlist Demo Pair"}
             </button>
             <button
-              onClick={handlePrepareType4}
+              onClick={handlePrepareUserOperation}
               className="btn-primary"
               disabled={payloadLoading}
             >
-              {payloadLoading ? "Preparing…" : "Prepare Type-4 Payload"}
+              {payloadLoading ? "Preparing…" : "Prepare UserOperation"}
             </button>
           </div>
         </header>
@@ -527,9 +550,9 @@ export default function Eip7702() {
           <StatusLog title="UserOperation" value={payloadStatus} />
         )}
 
-        {type4Preview ? (
+        {preparedOp ? (
           <pre className="surface-card surface-card--muted w-full overflow-hidden whitespace-pre-wrap break-all rounded border border-slate-800 p-3 text-xs text-slate-200">
-            {formatJson(type4Preview)}
+            {formatJson(preparedOp)}
           </pre>
         ) : null}
       </section>
@@ -540,20 +563,20 @@ export default function Eip7702() {
         </div>
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <h3 className="text-lg font-semibold text-slate-50">
-            Submit Type-4 Transaction
+            Submit UserOperation via Bundler
           </h3>
           <button
-            onClick={handleSubmitType4}
+            onClick={handleSubmitUserOperation}
             className="btn-primary"
-            disabled={submitLoading || !type4Preview}
+            disabled={submitLoading || !preparedOp}
           >
-            {submitLoading ? "Submitting…" : "Send Type-4"}
+            {submitLoading ? "Submitting…" : "Send UserOperation"}
           </button>
         </div>
         <p className="text-sm text-slate-300">
-          Sends the prepared payload using the demo signer as a Type-4
-          transaction. Requires the authorization and UserOperation above to be
-          prepared first.
+          Sends the prepared UserOperation through the bundler. Requires Steps 1
+          & 2 to complete so that the operation includes <code>eip7702Auth</code>
+          and paymaster sponsorship.
         </p>
         {submitStatus && <StatusLog title="Submission" value={submitStatus} />}
       </section>
@@ -601,50 +624,37 @@ function StatusLog({ title, value }: { title: string; value: string }) {
   );
 }
 
-function packOperation(op: {
-  sender: `0x${string}`;
-  nonce: bigint;
-  initCode?: `0x${string}`;
-  callData: `0x${string}`;
-  callGasLimit: bigint;
-  verificationGasLimit: bigint;
-  preVerificationGas: bigint;
-  maxFeePerGas: bigint;
-  maxPriorityFeePerGas: bigint;
-  paymaster?: `0x${string}`;
-  paymasterData?: `0x${string}`;
-  paymasterVerificationGasLimit?: bigint;
-  paymasterPostOpGasLimit?: bigint;
-  signature: `0x${string}`;
-}) {
-  const paymasterAndData = buildPaymasterAndData(
-    op.paymaster,
-    op.paymasterVerificationGasLimit,
-    op.paymasterPostOpGasLimit,
-    op.paymasterData
-  );
-  return {
-    sender: op.sender,
-    nonce: op.nonce,
-    initCode: op.initCode ?? ("0x" as const),
-    callData: op.callData,
-    accountGasLimits: packAccountGasLimits(
-      op.callGasLimit,
-      op.verificationGasLimit
-    ),
-    preVerificationGas: op.preVerificationGas,
-    gasFees: packGasFees(op.maxFeePerGas, op.maxPriorityFeePerGas),
-    paymasterAndData,
-    signature: op.signature,
-  };
-}
-
 function formatJson(value: unknown) {
   return JSON.stringify(
     value,
     (_, current) => (typeof current === "bigint" ? current.toString() : current),
     2
   );
+}
+
+function serializeAuthorizationForDebug(auth: any) {
+  try {
+    const chainIdHex = `0x${BigInt(auth.chainId).toString(16)}`;
+    const nonceHex = `0x${BigInt(auth.nonce).toString(16)}`;
+    const yParityHex = `0x${BigInt(auth.yParity ?? (auth.v === '28' || auth.v === 28 ? 1 : 0)).toString(16)}`;
+    return [chainIdHex, auth.address, nonceHex, yParityHex, auth.r, auth.s];
+  } catch {
+    return null;
+  }
+}
+
+// Some bundlers expect tuple order: [chainId, address, nonce, r, s, yParity]
+function serializeAuthorizationForBundler(auth: any) {
+  try {
+    const chainIdHex = `0x${BigInt(auth.chainId).toString(16)}`;
+    const nonceHex = `0x${BigInt(auth.nonce).toString(16)}`;
+    const yParityHex = `0x${BigInt(auth.yParity ?? (auth.v === '28' || auth.v === 28 ? 1 : 0)).toString(16)}`;
+    const addrLower = (auth.address ?? '').toLowerCase();
+    // Repo expectation: [chainId, address, nonce, yParity, r, s]
+    return [chainIdHex, addrLower, nonceHex, yParityHex, auth.r, auth.s];
+  } catch {
+    return null;
+  }
 }
 
 function shorten(value: `0x${string}`) {
