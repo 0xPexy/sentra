@@ -202,18 +202,18 @@ function resolveChain(chainId?: number | string): Chain | undefined {
 
 export function getBundlerClient(chainId?: number) {
   if (!cachedBundlerClient) {
-    const bundlerUrl = import.meta.env.VITE_BUNDLER_URL;
-    if (!bundlerUrl) {
-      throw new Error("VITE_BUNDLER_URL is not configured");
-    }
     const chain = resolveChain(chainId);
+    const rpcUrl = import.meta.env.VITE_RPC_URL;
+    if (!rpcUrl) {
+      throw new Error("VITE_RPC_URL is not configured");
+    }
     const basePublicClient = createPublicClient({
       chain,
-      transport: http(import.meta.env.VITE_RPC_URL ?? bundlerUrl),
+      transport: http(rpcUrl),
     });
     cachedBundlerClient = createBundlerClient({
       client: basePublicClient,
-      transport: http(bundlerUrl),
+      transport: createBundlerTransport(),
     });
   }
   return cachedBundlerClient;
@@ -244,10 +244,27 @@ export async function getSimpleSmartAccount(
 
 
 export function getBundlerClientBySimpleAccount(account: SmartAccount) {
-  const bundlerUrl = import.meta.env.VITE_BUNDLER_URL;
-  const client = createBundlerClient({
+  return createBundlerClient({
     account,
-    transport: http(bundlerUrl),
-  })
-  return client;
+    transport: createBundlerTransport(),
+  });
+}
+
+function createBundlerTransport() {
+  const proxyUrl = resolveBundlerProxyUrl();
+  const headers: Record<string, string> = {};
+  if (import.meta.env.VITE_DEV_TOKEN) {
+    headers["sentra-dev-token"] = import.meta.env.VITE_DEV_TOKEN;
+  }
+  return http(proxyUrl, {
+    fetchOptions: {
+      headers: Object.keys(headers).length ? headers : undefined,
+    },
+  });
+}
+
+function resolveBundlerProxyUrl() {
+  const apiBase = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
+  if (apiBase) return `${apiBase}/api/v1/bundler`;
+  return "/api/v1/bundler";
 }

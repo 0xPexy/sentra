@@ -12,16 +12,12 @@ import {
   getPublicClient,
   tenderlyTestNet,
 } from "../lib/viem";
-import {
-  buildPaymasterAndData,
-  packAccountGasLimits,
-  packGasFees,
-} from "../lib/userOpLegacy";
+
 import { toSelector } from "../lib/selectors";
 import { isEthAddress } from "../lib/address";
 import type { SignedAuthorization } from "viem";
 import { recoverAuthorizationAddress } from "viem/utils";
-import type { SmartAccount } from "viem/account-abstraction";
+import type { SmartAccount, UserOperation } from "viem/account-abstraction";
 
 const USDC_ADDRESS =
   "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as `0x${string}`;
@@ -50,6 +46,19 @@ const ERC20_APPROVE_ABI = [
   },
 ] as const;
 
+type GasEstimates = {
+  callGasLimit: bigint;
+  verificationGasLimit: bigint;
+  preVerificationGas: bigint;
+};
+
+type PreparedOperation = Omit<UserOperation<"0.8">, "signature">;
+type PreparedContext = {
+  entryPoint: `0x${string}`;
+  chainId: number;
+  target: `0x${string}`;
+};
+
 export default function Eip7702() {
   const { storedState } = usePlaygroundStoredState();
   const { token } = useAuth();
@@ -66,13 +75,21 @@ export default function Eip7702() {
   const [approveSpender, setApproveSpender] = useState<`0x${string}` | "">(
     storedState.simpleAccountOwner ?? storedState.paymasterEntryPoint ?? ""
   );
-  const [chainIdInput, setChainIdInput] = useState(
-    String(tenderlyTestNet.id)
-  );
+  const [chainIdInput, setChainIdInput] = useState(String(tenderlyTestNet.id));
   const [nonceInput, setNonceInput] = useState("");
   const [authorization, setAuthorization] =
     useState<SignedAuthorization | null>(null);
   const [preparedOp, setPreparedOp] = useState<any | null>(null);
+  const [preparedUnsignedOp, setPreparedUnsignedOp] =
+    useState<PreparedOperation | null>(null);
+  const [gasEstimates, setGasEstimates] = useState<GasEstimates | null>(null);
+  const [gasScaling, setGasScaling] = useState({
+    call: 100,
+    verification: 100,
+    preVerification: 100,
+  });
+  const [preparedContext, setPreparedContext] =
+    useState<PreparedContext | null>(null);
   const [authStatus, setAuthStatus] = useState("");
   const [payloadStatus, setPayloadStatus] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
@@ -113,9 +130,9 @@ export default function Eip7702() {
 
   const paymasterSummary = useMemo(() => {
     if (!paymasterInfo) return "Paymaster not registered yet.";
-    return `Paymaster ${paymasterInfo.address ?? "-"} sponsoring via EntryPoint ${
-      paymasterInfo.entryPoint ?? "-"
-    }.`;
+    return `Paymaster ${
+      paymasterInfo.address ?? "-"
+    } sponsoring via EntryPoint ${paymasterInfo.entryPoint ?? "-"}.`;
   }, [paymasterInfo]);
 
   const appendPayloadStatus = useCallback((line: string) => {
@@ -157,8 +174,16 @@ export default function Eip7702() {
         const recovered = await recoverAuthorizationAddress({
           authorization: signature,
         } as any);
-        console.log("[7702] recovered signer =", recovered, "expected =", account.address);
-        console.log("[7702] serialized tuple =", serializeAuthorizationForDebug(signature));
+        console.log(
+          "[7702] recovered signer =",
+          recovered,
+          "expected =",
+          account.address
+        );
+        console.log(
+          "[7702] serialized tuple =",
+          serializeAuthorizationForDebug(signature)
+        );
       } catch (e) {
         console.log("[7702] recoverAuthorizationAddress failed", e);
       }
@@ -215,9 +240,12 @@ export default function Eip7702() {
     }
   }, [demoAuthorizationAccount.address, token]);
 
-
   const handlePrepareUserOperation = useCallback(async () => {
     setPreparedOp(null);
+    setPreparedUnsignedOp(null);
+    setPreparedContext(null);
+    setGasEstimates(null);
+    setGasScaling({ call: 100, verification: 100, preVerification: 100 });
     setPayloadStatus("");
     if (!authorization) {
       setPayloadStatus("Sign an EIP-7702 authorization first.");
@@ -251,7 +279,12 @@ export default function Eip7702() {
           const recovered = await recoverAuthorizationAddress({
             authorization,
           } as any);
-          console.log("[7702] recovered signer before UO =", recovered, "sender =", eoaOwner);
+          console.log(
+            "[7702] recovered signer before UO =",
+            recovered,
+            "sender =",
+            eoaOwner
+          );
         }
       } catch (e) {
         console.log("[7702] recoverAuthorizationAddress (before UO) failed", e);
@@ -273,16 +306,23 @@ export default function Eip7702() {
         maxPriorityFeePerGas: DEFAULT_MAX_PRIORITY_FEE,
       });
       const preparedSanitized: any = { ...prepared };
-      const hadFactory = 'factory' in preparedSanitized || 'factoryData' in preparedSanitized;
+      const hadFactory =
+        "factory" in preparedSanitized || "factoryData" in preparedSanitized;
       delete preparedSanitized.factory;
       delete preparedSanitized.factoryData;
       delete preparedSanitized.initCode;
       // Remove any stub/dummy 7702 fields that bundler might have attached.
-      const hadAuthStub = 'authorization' in preparedSanitized || 'eip7702Auth' in preparedSanitized;
+      const hadAuthStub =
+        "authorization" in preparedSanitized ||
+        "eip7702Auth" in preparedSanitized;
       delete preparedSanitized.authorization;
       delete preparedSanitized.eip7702Auth;
-      if (hadFactory) console.log('[7702] removed factory/factoryData from prepared op');
-      if (hadAuthStub) console.log('[7702] removed stub authorization/eip7702Auth from prepared op');
+      if (hadFactory)
+        console.log("[7702] removed factory/factoryData from prepared op");
+      if (hadAuthStub)
+        console.log(
+          "[7702] removed stub authorization/eip7702Auth from prepared op"
+        );
       const preparedWithSender = {
         ...preparedSanitized,
         sender: eoaSender,
@@ -323,58 +363,85 @@ export default function Eip7702() {
         ...sponsoredOp,
         paymaster: paymasterData.paymaster,
         paymasterData: paymasterData.paymasterData,
-        paymasterVerificationGasLimit: paymasterData.paymasterVerificationGasLimit,
+        paymasterVerificationGasLimit:
+          paymasterData.paymasterVerificationGasLimit,
         paymasterPostOpGasLimit: paymasterData.paymasterPostOpGasLimit,
       };
       appendPayloadStatus("Paymaster attached sponsorship data.");
 
-      const signature = await smartAccount.signUserOperation(sponsoredOp);
-      smartAccountRef.current = smartAccount;
-      const { authorization: _stubAuth, ...finalOp } = {
+      const estimateResult = await bundler.estimateUserOperationGas({
+        account: smartAccount,
         ...sponsoredOp,
-        signature,
-      } as any;
-      // Many bundlers expect SerializedAuthorizationList (tuple) form.
-      // Build `authorization` (SignedAuthorization) – viem maps this to rpc.eip7702Auth.
+      });
+      setGasEstimates(estimateResult);
+      appendPayloadStatus(
+        `Bundler gas estimate → CGL=${estimateResult.callGasLimit.toString()}, VGL=${estimateResult.verificationGasLimit.toString()}, PVG=${estimateResult.preVerificationGas.toString()}.`
+      );
+
       const normalizedAuth = authorization
         ? {
             ...authorization,
-            address: (authorization as any).address?.toLowerCase?.() ?? authorization.address,
+            address:
+              (authorization as any).address?.toLowerCase?.() ??
+              authorization.address,
           }
         : null;
-      const opWithAuth = {
-        ...finalOp,
+
+      const opWithEstimates: PreparedOperation = {
+        ...(sponsoredOp as PreparedOperation),
+        callGasLimit: estimateResult.callGasLimit,
+        verificationGasLimit: estimateResult.verificationGasLimit,
+        preVerificationGas: estimateResult.preVerificationGas,
         authorization: normalizedAuth ?? undefined,
-      } as any;
-      console.log("[7702] UO keys", Object.keys(opWithAuth));
+      };
+      smartAccountRef.current = smartAccount;
+      setPreparedUnsignedOp(opWithEstimates);
+      setPreparedOp(opWithEstimates);
+      setPreparedContext({
+        entryPoint: entryPoint as `0x${string}`,
+        chainId,
+        target: USDC_ADDRESS,
+      });
+      console.log("[7702] UO keys", Object.keys(opWithEstimates));
       console.log(
         "[7702] has authorization =",
-        "authorization" in (opWithAuth as any),
+        "authorization" in (opWithEstimates as any),
         "has authorizationList =",
-        "authorizationList" in (opWithAuth as any),
+        "authorizationList" in (opWithEstimates as any),
         "has eip7702Auth =",
-        "eip7702Auth" in (opWithAuth as any)
+        "eip7702Auth" in (opWithEstimates as any)
       );
       if (authorization) {
         console.log("[7702] authorization object =", authorization);
-        console.log("[7702] serialized tuple =", serializeAuthorizationForDebug(authorization));
+        console.log(
+          "[7702] serialized tuple =",
+          serializeAuthorizationForDebug(authorization)
+        );
       }
-      const dbgAuth = (opWithAuth as any).authorization;
+      const dbgAuth = (opWithEstimates as any).authorization;
       console.log("[7702] final authorization =", dbgAuth);
-      setPreparedOp(opWithAuth);
       setSubmitStatus("");
-      appendPayloadStatus("UserOperation ready with eip7702Auth.");
+      appendPayloadStatus(
+        "UserOperation ready. Adjust gas sliders (default 100%) before sending."
+      );
     } catch (error: any) {
       console.error(error);
       appendPayloadStatus(error?.message ?? String(error));
     } finally {
       setPayloadLoading(false);
     }
-  }, [appendPayloadStatus, approveSpender, authorization, entryPoint, resolvedChainId, token]);
+  }, [
+    appendPayloadStatus,
+    approveSpender,
+    authorization,
+    entryPoint,
+    resolvedChainId,
+    token,
+  ]);
 
   const handleSubmitUserOperation = useCallback(async () => {
-    if (!preparedOp) {
-      setSubmitStatus("Prepare the UserOperation first.");
+    if (!preparedUnsignedOp || !gasEstimates || !preparedContext) {
+      setSubmitStatus("Build the UserOperation (Step 2) before sending.");
       return;
     }
     if (!smartAccountRef.current) {
@@ -382,12 +449,74 @@ export default function Eip7702() {
       return;
     }
     setSubmitLoading(true);
-    setSubmitStatus("Submitting UserOperation via bundler…");
+    setSubmitStatus("Signing + submitting UserOperation via bundler…");
     try {
-      const bundler = getBundlerClientBySimpleAccount(
-        smartAccountRef.current
+      const scaledCallGasLimit = scaleGasValue(
+        gasEstimates.callGasLimit,
+        gasScaling.call
       );
-      const hash = await bundler.sendUserOperation(preparedOp);
+      const scaledVerificationGasLimit = scaleGasValue(
+        gasEstimates.verificationGasLimit,
+        gasScaling.verification
+      );
+      const scaledPreVerificationGas = scaleGasValue(
+        gasEstimates.preVerificationGas,
+        gasScaling.preVerification
+      );
+
+      const baseOp = preparedUnsignedOp as UserOperation<"0.8">;
+      const opWithScaling: UserOperation<"0.8"> = {
+        ...baseOp,
+        callGasLimit: scaledCallGasLimit,
+        verificationGasLimit: scaledVerificationGasLimit,
+        preVerificationGas: scaledPreVerificationGas,
+      };
+
+      const paymasterClient = getPaymasterClient(token);
+      const paymasterData = await paymasterClient.getPaymasterData({
+        sender: opWithScaling.sender,
+        nonce: opWithScaling.nonce,
+        callData: opWithScaling.callData,
+        callGasLimit: opWithScaling.callGasLimit,
+        verificationGasLimit: opWithScaling.verificationGasLimit,
+        preVerificationGas: opWithScaling.preVerificationGas,
+        maxFeePerGas: opWithScaling.maxFeePerGas,
+        maxPriorityFeePerGas: opWithScaling.maxPriorityFeePerGas,
+        factory: opWithScaling.factory,
+        factoryData: opWithScaling.factoryData,
+        paymasterPostOpGasLimit: opWithScaling.paymasterPostOpGasLimit,
+        paymasterVerificationGasLimit:
+          opWithScaling.paymasterVerificationGasLimit,
+        entryPointAddress: preparedContext.entryPoint,
+        chainId: preparedContext.chainId,
+        context: {
+          target: preparedContext.target,
+          selector: USDC_APPROVE_SELECTOR,
+        },
+      });
+
+      const opWithPaymaster: UserOperation<"0.8"> = {
+        ...opWithScaling,
+        paymaster: paymasterData.paymaster,
+        paymasterData: paymasterData.paymasterData,
+        paymasterVerificationGasLimit:
+          paymasterData.paymasterVerificationGasLimit ??
+          opWithScaling.paymasterVerificationGasLimit,
+        paymasterPostOpGasLimit:
+          paymasterData.paymasterPostOpGasLimit ??
+          opWithScaling.paymasterPostOpGasLimit,
+      };
+
+      const smartAccount = smartAccountRef.current;
+      const signature = await smartAccount.signUserOperation(opWithPaymaster);
+      const signedOp = {
+        ...opWithPaymaster,
+        signature,
+      };
+      setPreparedOp(signedOp);
+
+      const bundler = getBundlerClientBySimpleAccount(smartAccount);
+      const hash = await bundler.sendUserOperation(signedOp);
       setSubmitStatus(`UserOperation sent. Hash: ${hash}`);
       const receipt = await bundler.waitForUserOperationReceipt({ hash });
       setSubmitStatus(
@@ -399,7 +528,15 @@ export default function Eip7702() {
     } finally {
       setSubmitLoading(false);
     }
-  }, [preparedOp]);
+  }, [
+    gasEstimates,
+    gasScaling.call,
+    gasScaling.preVerification,
+    gasScaling.verification,
+    preparedContext,
+    preparedUnsignedOp,
+    token,
+  ]);
 
   return (
     <div className="space-y-6">
@@ -453,7 +590,9 @@ export default function Eip7702() {
         <div className="rounded border border-amber-400/40 bg-amber-500/10 p-3 text-xs text-amber-100">
           <div>
             Demo signer address:{" "}
-            <span className="font-mono">{demoAuthorizationAccount.address}</span>
+            <span className="font-mono">
+              {demoAuthorizationAccount.address}
+            </span>
           </div>
           <div className="mt-1 text-amber-200/80">
             Private key: {shortenPrivateKey(DEMO_AUTH_PRIVATE_KEY)} (sandbox use
@@ -480,9 +619,7 @@ export default function Eip7702() {
           />
         </div>
 
-        {authStatus && (
-          <StatusLog title="Authorization" value={authStatus} />
-        )}
+        {authStatus && <StatusLog title="Authorization" value={authStatus} />}
 
         {authorization ? (
           <pre className="surface-card surface-card--muted overflow-x-auto rounded border border-slate-800 p-3 text-xs text-slate-200">
@@ -537,9 +674,13 @@ export default function Eip7702() {
         </div>
 
         <div className="rounded border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300">
-          Target contract: <span className="font-mono">{USDC_ADDRESS}</span> (USDC)
+          Target contract: <span className="font-mono">{USDC_ADDRESS}</span>{" "}
+          (USDC)
           <br />
-          Calldata: <code>approve(spender, {`${DEFAULT_APPROVE_AMOUNT.toString()}`} wei)</code>
+          Calldata:{" "}
+          <code>
+            approve(spender, {`${DEFAULT_APPROVE_AMOUNT.toString()}`} wei)
+          </code>
         </div>
 
         {allowlistStatus && (
@@ -549,6 +690,45 @@ export default function Eip7702() {
         {payloadStatus && (
           <StatusLog title="UserOperation" value={payloadStatus} />
         )}
+
+        {gasEstimates && preparedUnsignedOp ? (
+          <div className="surface-card surface-card--muted space-y-4 p-4">
+            <div className="text-sm font-semibold text-slate-200">
+              Gas Scaling
+            </div>
+            <p className="text-xs text-slate-400">
+              Bundler estimates are treated as 100%. Adjust the sliders before
+              submitting if you want extra headroom.
+            </p>
+            <GasScalingControl
+              label="Call Gas Limit"
+              percent={gasScaling.call}
+              baseValue={gasEstimates.callGasLimit}
+              onChange={(value) =>
+                setGasScaling((prev) => ({ ...prev, call: value }))
+              }
+            />
+            <GasScalingControl
+              label="Verification Gas Limit"
+              percent={gasScaling.verification}
+              baseValue={gasEstimates.verificationGasLimit}
+              onChange={(value) =>
+                setGasScaling((prev) => ({ ...prev, verification: value }))
+              }
+            />
+            <GasScalingControl
+              label="Pre-Verification Gas"
+              percent={gasScaling.preVerification}
+              baseValue={gasEstimates.preVerificationGas}
+              onChange={(value) =>
+                setGasScaling((prev) => ({
+                  ...prev,
+                  preVerification: value,
+                }))
+              }
+            />
+          </div>
+        ) : null}
 
         {preparedOp ? (
           <pre className="surface-card surface-card--muted w-full overflow-hidden whitespace-pre-wrap break-all rounded border border-slate-800 p-3 text-xs text-slate-200">
@@ -568,14 +748,20 @@ export default function Eip7702() {
           <button
             onClick={handleSubmitUserOperation}
             className="btn-primary"
-            disabled={submitLoading || !preparedOp}
+            disabled={
+              submitLoading ||
+              !preparedUnsignedOp ||
+              !gasEstimates ||
+              !preparedContext
+            }
           >
             {submitLoading ? "Submitting…" : "Send UserOperation"}
           </button>
         </div>
         <p className="text-sm text-slate-300">
           Sends the prepared UserOperation through the bundler. Requires Steps 1
-          & 2 to complete so that the operation includes <code>eip7702Auth</code>
+          & 2 to complete so that the operation includes{" "}
+          <code>eip7702Auth</code>
           and paymaster sponsorship.
         </p>
         {submitStatus && <StatusLog title="Submission" value={submitStatus} />}
@@ -608,6 +794,57 @@ function Field({
   );
 }
 
+function GasScalingControl({
+  label,
+  percent,
+  baseValue,
+  onChange,
+}: {
+  label: string;
+  percent: number;
+  baseValue: bigint;
+  onChange: (value: number) => void;
+}) {
+  const scaledValue = scaleGasValue(baseValue, percent);
+  const levelClass =
+    percent < 80
+      ? "text-rose-400"
+      : percent < 100
+      ? "text-amber-300"
+      : "text-emerald-300";
+  const warningText =
+    percent < 80
+      ? "Risk: below 80% is very likely to fail."
+      : percent < 100
+      ? "Caution: below the baseline."
+      : "Safe: baseline or higher.";
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-xs text-slate-400">
+        <span>{label}</span>
+        <span className={`font-mono ${levelClass}`}>
+          {percent}% → {scaledValue.toString()}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={50}
+        max={200}
+        step={5}
+        value={percent}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="w-full"
+      />
+      <div className={`text-[11px] ${levelClass}`}>{warningText}</div>
+    </div>
+  );
+}
+
+function scaleGasValue(base: bigint, percent: number) {
+  return (base * BigInt(percent)) / 100n;
+}
+
 function StatusLog({ title, value }: { title: string; value: string }) {
   return (
     <div className="max-w-full">
@@ -616,7 +853,11 @@ function StatusLog({ title, value }: { title: string; value: string }) {
       </div>
       <pre
         className="mt-2 w-full overflow-hidden whitespace-pre-wrap rounded border border-slate-800 bg-slate-950/40 p-3 text-xs text-slate-200"
-        style={{ maxWidth: "100%", wordBreak: "break-all", overflowWrap: "anywhere" }}
+        style={{
+          maxWidth: "100%",
+          wordBreak: "break-all",
+          overflowWrap: "anywhere",
+        }}
       >
         {value}
       </pre>
@@ -627,7 +868,8 @@ function StatusLog({ title, value }: { title: string; value: string }) {
 function formatJson(value: unknown) {
   return JSON.stringify(
     value,
-    (_, current) => (typeof current === "bigint" ? current.toString() : current),
+    (_, current) =>
+      typeof current === "bigint" ? current.toString() : current,
     2
   );
 }
@@ -636,7 +878,9 @@ function serializeAuthorizationForDebug(auth: any) {
   try {
     const chainIdHex = `0x${BigInt(auth.chainId).toString(16)}`;
     const nonceHex = `0x${BigInt(auth.nonce).toString(16)}`;
-    const yParityHex = `0x${BigInt(auth.yParity ?? (auth.v === '28' || auth.v === 28 ? 1 : 0)).toString(16)}`;
+    const yParityHex = `0x${BigInt(
+      auth.yParity ?? (auth.v === "28" || auth.v === 28 ? 1 : 0)
+    ).toString(16)}`;
     return [chainIdHex, auth.address, nonceHex, yParityHex, auth.r, auth.s];
   } catch {
     return null;
@@ -648,8 +892,10 @@ function serializeAuthorizationForBundler(auth: any) {
   try {
     const chainIdHex = `0x${BigInt(auth.chainId).toString(16)}`;
     const nonceHex = `0x${BigInt(auth.nonce).toString(16)}`;
-    const yParityHex = `0x${BigInt(auth.yParity ?? (auth.v === '28' || auth.v === 28 ? 1 : 0)).toString(16)}`;
-    const addrLower = (auth.address ?? '').toLowerCase();
+    const yParityHex = `0x${BigInt(
+      auth.yParity ?? (auth.v === "28" || auth.v === 28 ? 1 : 0)
+    ).toString(16)}`;
+    const addrLower = (auth.address ?? "").toLowerCase();
     // Repo expectation: [chainId, address, nonce, yParity, r, s]
     return [chainIdHex, addrLower, nonceHex, yParityHex, auth.r, auth.s];
   } catch {

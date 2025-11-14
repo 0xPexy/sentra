@@ -170,8 +170,11 @@ export function CalculateSimpleAccountCard({
       return;
     }
     setLoading(true);
-    setStatus("Calculating address…");
+    setStatus("Preparing factory call…");
     try {
+      setStatus((prev) =>
+        prev ? `${prev}\nEstimating SimpleAccount address…` : "Estimating SimpleAccount address…"
+      );
       const predicted = (await getPublicClient().readContract({
         address: factoryAddress as `0x${string}`,
         abi: SIMPLE_ACCOUNT_FACTORY_ABI,
@@ -180,7 +183,9 @@ export function CalculateSimpleAccountCard({
       })) as `0x${string}`;
 
       setCalculatedAddress(predicted);
-      setStatus(`Calculated ✅\nAddress: ${predicted}`);
+      setStatus(
+        `Calculated ✅\nAddress: ${predicted}\nReady to use as sender/minter.`
+      );
       updateStoredState({
         simpleAccount: predicted,
         simpleAccountFactory: factoryAddress as `0x${string}`,
@@ -264,9 +269,51 @@ export function CalculateSimpleAccountCard({
       </div>
 
       {status && (
-        <pre className="surface-card surface-card--muted whitespace-pre-wrap p-3 text-xs text-slate-200">
-          {status}
-        </pre>
+        <div className="surface-card surface-card--muted p-3 text-xs text-slate-200">
+          <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-slate-400">
+            SimpleAccount Resolution
+          </div>
+          <ol className="space-y-2">
+            {status
+              .split("\n")
+              .map((line) => line.trim())
+              .filter((line) => line.length > 0)
+              .map((line, index, all) => {
+                const lower = line.toLowerCase();
+                const isError =
+                  lower.startsWith("failed") ||
+                  lower.includes("unable") ||
+                  lower.includes("error");
+                const isDone =
+                  lower.includes("calculated") || lower.includes("ready");
+                const isActive =
+                  !isError && !isDone && index === all.length - 1;
+                const dotClass = isError
+                  ? "bg-rose-500"
+                  : isDone
+                  ? "bg-emerald-500"
+                  : isActive
+                  ? "bg-emerald-300"
+                  : "bg-slate-600";
+                const textClass = isError
+                  ? "text-rose-300"
+                  : isDone
+                  ? "text-emerald-300"
+                  : "text-slate-200";
+                return (
+                  <li key={`${line}-${index}`} className="flex items-start gap-3">
+                    <div className="mt-[3px] flex flex-col items-center">
+                      <span className={`h-2 w-2 rounded-full ${dotClass}`} />
+                      {index < all.length - 1 && (
+                        <span className="mt-1 h-4 w-px bg-slate-700" />
+                      )}
+                    </div>
+                    <span className={textClass}>{line}</span>
+                  </li>
+                );
+              })}
+          </ol>
+        </div>
       )}
     </section>
   );
