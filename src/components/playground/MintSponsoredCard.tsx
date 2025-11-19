@@ -456,35 +456,43 @@ export function MintSponsoredCard({
         . The Paymaster sponsors the entire UserOperation.
       </p>
       {nftPreview?.image ? (
-        <div className="inline-flex items-center gap-4 rounded-lg border border-slate-800 bg-slate-900/40 p-4">
-          <img
-            src={nftPreview.image}
-            alt={nftPreview?.name ?? "SENTRA NFT"}
-            className="h-32 w-32 rounded-lg border border-slate-800 object-cover"
-          />
-          <div>
-            <div className="text-sm uppercase tracking-[0.2em] text-emerald-300/80">
-              SENTRA NFT
+        <div className="inline-flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+          <div className="flex items-center gap-4">
+            <img
+              src={nftPreview.image}
+              alt={nftPreview?.name ?? "SENTRA NFT"}
+              className="h-32 w-32 rounded-lg border border-slate-800 object-cover"
+            />
+            <div>
+              <div className="text-sm uppercase tracking-[0.2em] text-emerald-300/80">
+                SENTRA NFT
+              </div>
+              <div className="text-lg font-semibold text-slate-50">
+                {nftPreview?.name ?? "Prototype"}
+              </div>
+              {nftPreview?.description ? (
+                <p className="mt-1 text-sm text-slate-400 line-clamp-3">
+                  {nftPreview.description}
+                </p>
+              ) : null}
             </div>
-            <div className="text-lg font-semibold text-slate-50">
-              {nftPreview?.name ?? "Prototype"}
-            </div>
-            {nftPreview?.description ? (
-              <p className="mt-1 text-sm text-slate-400 line-clamp-3">
-                {nftPreview.description}
-              </p>
-            ) : null}
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-emerald-200">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            Gas Sponsored · 0 Fee Mint
           </div>
         </div>
       ) : (
-        <div className="rounded border border-dashed border-slate-700 p-4 text-sm text-slate-400">
-          Loading preview from {NFT_METADATA_URI}
-        </div>
+        <>
+          <div className="rounded border border-dashed border-slate-700 p-4 text-sm text-slate-400">
+            Loading preview from {NFT_METADATA_URI}
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-emerald-200">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            Gas Sponsored · 0 Fee Mint
+          </div>
+        </>
       )}
-      <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-emerald-200">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-        Gas Sponsored · 0 Fee Mint
-      </div>
       <div className="grid gap-3 md:grid-cols-3">
         <div className="md:col-span-3">
           <div className="mb-1 text-sm text-slate-400">
@@ -628,7 +636,7 @@ export function MintSponsoredCard({
                         Bundler reported {eventPayload.status ?? "update"}.
                         {eventPayload.userOpHash ? (
                           <Link
-                            to={`/details/${eventPayload.userOpHash}`}
+                            to={`/app/details/${eventPayload.userOpHash}`}
                             className="text-emerald-200 underline"
                           >
                             View details

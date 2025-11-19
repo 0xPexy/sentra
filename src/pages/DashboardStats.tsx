@@ -9,7 +9,6 @@ import {
   type StatsOverviewResponse,
 } from "../lib/api";
 import { useAuth } from "../state/auth";
-import { isEthAddress } from "../lib/address";
 
 type OverviewState = {
   overview: StatsOverviewResponse | null;
@@ -22,50 +21,21 @@ type OpsState = {
 
 export default function DashboardStats() {
   const { token } = useAuth();
-  const [paymasterAddress, setPaymasterAddress] = useState<
-    `0x${string}` | null
-  >(null);
-  const [paymasterChainId, setPaymasterChainId] = useState<number | undefined>(
-    undefined
-  );
   const [{ overview }, setOverview] = useState<OverviewState>({
     overview: null,
   });
   const [opsState, setOpsState] = useState<OpsState>({ items: [] });
 
   useEffect(() => {
-    if (!token) return;
-
+    if (!token) {
+      setOverview({ overview: null });
+      return;
+    }
     let cancelled = false;
 
-    const load = async () => {
+    const loadOverview = async () => {
       try {
-        const paymaster = await api.getPaymaster(token);
-        if (
-          paymaster.address &&
-          paymaster.address !== "0x0000000000000000000000000000000000000000" &&
-          isEthAddress(paymaster.address)
-        ) {
-          setPaymasterAddress(paymaster.address as `0x${string}`);
-          setPaymasterChainId(
-            paymaster.chainId && Number.isFinite(paymaster.chainId)
-              ? Number(paymaster.chainId)
-              : undefined
-          );
-        } else {
-          setPaymasterAddress(null);
-          setPaymasterChainId(undefined);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          if (!(error instanceof ApiError && error.status === 404)) {
-            console.error(error);
-          }
-        }
-      }
-
-      try {
-        const [overviewResp] = await Promise.all([api.getStatsOverview(token)]);
+        const overviewResp = await api.getStatsOverview(token);
         if (!cancelled) {
           setOverview((prev) => ({
             ...prev,
@@ -74,13 +44,17 @@ export default function DashboardStats() {
         }
       } catch (error) {
         if (!cancelled) {
-          console.error(error);
+          if (error instanceof ApiError && error.status === 404) {
+            setOverview({ overview: null });
+          } else {
+            console.error(error);
+          }
           setOverview((prev) => ({ ...prev, overview: null }));
         }
       }
     };
 
-    void load();
+    void loadOverview();
 
     return () => {
       cancelled = true;
@@ -88,7 +62,7 @@ export default function DashboardStats() {
   }, [token]);
 
   useEffect(() => {
-    if (!token || !paymasterAddress) {
+    if (!token) {
       setOpsState({ items: [], nextCursor: undefined });
       return;
     }
@@ -97,9 +71,8 @@ export default function DashboardStats() {
 
     const loadOps = async () => {
       try {
-        const response = await api.getPaymasterOps(token, paymasterAddress, {
+        const response = await api.getPaymasterOps(token, {
           limit: 50,
-          chainId: paymasterChainId,
         });
         if (!cancelled) {
           setOpsState({
@@ -123,7 +96,7 @@ export default function DashboardStats() {
     return () => {
       cancelled = true;
     };
-  }, [token, paymasterAddress, paymasterChainId]);
+  }, [token]);
 
   const tableRows = useMemo(
     () =>

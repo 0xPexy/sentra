@@ -27,26 +27,27 @@ type ButtonProps = {
   children: ReactNode;
   onClick: () => void;
   disabled?: boolean;
+  className?: string;
 };
 
-function PrimaryButton({ children, onClick, disabled }: ButtonProps) {
+function PrimaryButton({ children, onClick, disabled, className }: ButtonProps) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className="btn-primary"
+      className={`btn-primary ${className ?? ""}`}
     >
       {children}
     </button>
   );
 }
 
-function SecondaryButton({ children, onClick, disabled }: ButtonProps) {
+function SecondaryButton({ children, onClick, disabled, className }: ButtonProps) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className="btn-secondary"
+      className={`btn-secondary ${className ?? ""}`}
     >
       {children}
     </button>
@@ -695,20 +696,20 @@ type SimulationCardConfig = {
                   </div>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex w-full gap-2">
                 <PrimaryButton
                   onClick={() => handleSimulate(card.preset, "bad")}
-                  
+                  className="flex-1"
                   disabled={result.bad.status === "loading"}
                 >
-                  {result.bad.status === "loading" ? "Simulating…" : "Run Error Scenario"}
+                  {result.bad.status === "loading" ? "Simulating…" : "Run Error Op"}
                 </PrimaryButton>
                 <SecondaryButton
                   onClick={() => handleSimulate(card.preset, "fix")}
-                  
+                  className="flex-1"
                   disabled={result.fix.status === "loading"}
                 >
-                  {result.fix.status === "loading" ? "Simulating…" : "Run Fixed Scenario"}
+                  {result.fix.status === "loading" ? "Simulating…" : "Run Fixed Op"}
                 </SecondaryButton>
               </div>
               <ResultPanel title="Error Scenario" result={result.bad} />

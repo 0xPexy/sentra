@@ -45,31 +45,23 @@ export default function Login() {
     }
   }, []);
 
-  const authUrl = useMemo(() => {
-    try {
-      return new URL(API_BASE);
-    } catch {
-      return new URL(window.location.origin);
-    }
-  }, []);
-
   const buildSiweMessage = useCallback(
     (owner: `0x${string}`, nonce: string) => {
-      const domain = authUrl.host;
-      const origin = authUrl.origin;
+      const domain = window.location.host;
+      const origin = window.location.origin;
       const issuedAt = new Date().toISOString();
       return `${domain} wants you to sign in with your Ethereum account:
 ${owner}
 
-Sign in to Sentinel 4337
+Sign in to Sentra
 
 URI: ${origin}
 Version: 1
 Chain ID: ${tenderlyTestNet.id}
 Nonce: ${nonce}
-      Issued At: ${issuedAt}`;
+Issued At: ${issuedAt}`;
     },
-    [authUrl]
+    []
   );
 
   const handleSignIn = useCallback(async () => {

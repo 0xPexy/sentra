@@ -141,6 +141,22 @@ type ContractAddressResponse = {
   address: `0x${string}`;
 };
 
+export type CurrentUserResponse = {
+  id?: number;
+  address: `0x${string}`;
+};
+
+export type AuthNonceResponse = {
+  nonce: string;
+};
+
+type WalletNftEntry = { tokenId: string | number; [key: string]: unknown };
+type WalletNftResponse =
+  | WalletNftEntry[]
+  | {
+      tokens: WalletNftEntry[];
+    };
+
 function buildUserOperation(overrides?: PaymasterUserOperationOverrides) {
   const base: Record<string, unknown> = {
     sender: overrides?.sender ?? ZERO_ADDRESS,
@@ -251,11 +267,14 @@ export type OpGasResponse = {
 };
 
 export const api = {
-  login: (username: string, password: string) =>
+  getAuthNonce: () => req<AuthNonceResponse>("/auth/nonce"),
+  loginWithSiwe: (payload: { message: string; signature: string }) =>
     req<{ token: string }>("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify(payload),
     }),
+  getCurrentUser: (token: string) =>
+    req<CurrentUserResponse>("/api/v1/me", {}, token),
 
   // paymaster overview
   createPaymaster: (token: string, payload: Partial<Paymaster>) =>
@@ -282,14 +301,13 @@ export const api = {
     req<StatsOverviewResponse>("/api/v1/stats/overview", {}, token),
   getPaymasterOps: (
     token: string,
-    address: `0x${string}`,
     params?: { chainId?: number; limit?: number; cursor?: string }
   ) =>
     req<PaymasterOpsResponse>(
-      `/api/v1/paymasters/${address}/ops${buildQuery(params)}`,
+      `/api/v1/paymasters/ops${buildQuery(params)}`,
       {},
       token
-  ),
+    ),
   getOpDetail: (token: string | null | undefined, hash: `0x${string}`) =>
     req<any>(`/api/v1/ops/${hash}`, {}, token ?? undefined),
   getOpGas: (token: string | null | undefined, hash: `0x${string}`) =>
@@ -357,6 +375,12 @@ export const api = {
       `/api/v1/paymasters/me/contracts/${contractId}`,
       { method: "DELETE" },
       token
+    ),
+  getWalletNfts: (address: `0x${string}`, token?: string | null) =>
+    req<WalletNftResponse>(
+      `/api/v1/nfts/${address}`,
+      {},
+      token ?? undefined
     ),
 
   // users whitelist

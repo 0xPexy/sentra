@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { encodeFunctionData } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { encodeFunctionData, toHex } from "viem";
 import { toSimpleSmartAccount } from "permissionless/accounts";
 import PageHeader from "../components/layout/PageHeader";
+import { Link } from "react-router-dom";
 import { usePlaygroundStoredState } from "../hooks/usePlaygroundStoredState";
 import { useAuth } from "../state/auth";
 import { ApiError, api, type PaymasterResponse } from "../lib/api";
 import {
+  getBundlerClient,
   getBundlerClientBySimpleAccount,
   getPaymasterClient,
   getPublicClient,
@@ -18,33 +19,25 @@ import { isEthAddress } from "../lib/address";
 import type { SignedAuthorization } from "viem";
 import { recoverAuthorizationAddress } from "viem/utils";
 import type { SmartAccount, UserOperation } from "viem/account-abstraction";
+import { SAFE_MINT_ABI } from "../lib/userOpLegacy";
+import { NFT_METADATA_URI } from "../components/playground/MintSponsoredCard";
+import { WalletNftsCard } from "../components/playground/WalletNftsCard";
+import { useEventStream } from "../hooks/useEventStream";
+import { formatEventStatusLine, parseEventStatusLine } from "../lib/events";
+import { privateKeyToAccount } from "viem/accounts";
 
-const USDC_ADDRESS =
-  "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as `0x${string}`;
-const USDC_APPROVE_SELECTOR = toSelector("approve(address,uint256)");
 const GWEI = 1_000_000_000n;
 const DEFAULT_MAX_PRIORITY_FEE = 1n * GWEI;
 const DEFAULT_MAX_FEE = 30n * GWEI;
 const DEFAULT_CALL_GAS_LIMIT = 1_000_000n;
 const DEFAULT_PRE_VERIFICATION_GAS = 1_000_000n;
 const DEFAULT_VERIFICATION_GAS_LIMIT = 500_000n;
-const DEMO_AUTH_PRIVATE_KEY =
-  "0x6b1d4d8a1eef2711a2c626b7338f2c1fe814f81a79a3d4a7f0c1d6b7e9a4c5f6" as const;
 const SIMPLE_7702_ACCOUNT =
   "0xe6Cae83BdE06E4c305530e199D7217f42808555B" as const;
-const DEFAULT_APPROVE_AMOUNT = 1_000_000_000_000_000_000n;
-const ERC20_APPROVE_ABI = [
-  {
-    type: "function",
-    name: "approve",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "spender", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
-  },
-] as const;
+const SAFE_MINT_SELECTOR = toSelector("safeMint(address,string)");
+const DEMO_7702_PRIVATE_KEY =
+  "0x1cd8e4cc72abb54bb073fa919e60d7b9c9b3ba35f6bccdc4c9839be8f16cd3af";
+const demoAuthorizationAccount = privateKeyToAccount(DEMO_7702_PRIVATE_KEY);
 
 type GasEstimates = {
   callGasLimit: bigint;
@@ -62,9 +55,8 @@ type PreparedContext = {
 export default function Eip7702() {
   const { storedState } = usePlaygroundStoredState();
   const { token } = useAuth();
-  const demoAuthorizationAccount = useMemo(
-    () => privateKeyToAccount(DEMO_AUTH_PRIVATE_KEY),
-    []
+  const [walletAddress, setWalletAddress] = useState<`0x${string}` | "">(
+    demoAuthorizationAccount?.address ?? ""
   );
   const [paymasterInfo, setPaymasterInfo] = useState<PaymasterResponse | null>(
     null
@@ -97,11 +89,19 @@ export default function Eip7702() {
   const [submitLoading, setSubmitLoading] = useState(false);
   const [authorizationOwner, setAuthorizationOwner] = useState<
     `0x${string}` | null
-  >(demoAuthorizationAccount.address);
+  >(null);
   const [allowlistStatus, setAllowlistStatus] = useState("");
   const [allowlistLoading, setAllowlistLoading] = useState(false);
   const [submitStatus, setSubmitStatus] = useState("");
   const smartAccountRef = useRef<SmartAccount | null>(null);
+  const [nftContractAddress, setNftContractAddress] = useState<
+    `0x${string}` | ""
+  >("");
+  const [walletRefreshSignal, setWalletRefreshSignal] = useState(0);
+  const eventForWallet = useEventStream(
+    isEthAddress(walletAddress) ? (walletAddress as `0x${string}`) : undefined
+  );
+  const lastEventHashRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -123,6 +123,42 @@ export default function Eip7702() {
     };
   }, [token]);
 
+  useEffect(() => {
+    if (!token) return;
+    let ignore = false;
+    (async () => {
+      try {
+        const result = await api.getContractAddress("erc721", token);
+        if (ignore) return;
+        if (result?.address) {
+          setNftContractAddress(result.address as `0x${string}`);
+        }
+      } catch (error) {
+        if (!ignore) {
+          console.error("Failed to load ERC-721 address", error);
+        }
+      }
+    })();
+    return () => {
+      ignore = true;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    lastEventHashRef.current = null;
+  }, [walletAddress]);
+
+  useEffect(() => {
+    if (!eventForWallet?.userOpHash) return;
+    if (lastEventHashRef.current === eventForWallet.userOpHash) return;
+    lastEventHashRef.current = eventForWallet.userOpHash;
+    const line = formatEventStatusLine(eventForWallet);
+    setSubmitStatus((prev) => (prev ? `${prev}\n${line}` : line));
+    if (eventForWallet.status?.toLowerCase() === "success") {
+      setWalletRefreshSignal((prev) => prev + 1);
+    }
+  }, [eventForWallet]);
+
   const resolvedChainId = useMemo(() => {
     const parsed = Number(chainIdInput);
     return Number.isNaN(parsed) || parsed <= 0 ? tenderlyTestNet.id : parsed;
@@ -138,6 +174,9 @@ export default function Eip7702() {
   const appendPayloadStatus = useCallback((line: string) => {
     setPayloadStatus((prev) => (prev ? `${prev}\n${line}` : line));
   }, []);
+  const appendSubmitStatus = useCallback((line: string) => {
+    setSubmitStatus((prev) => (prev ? `${prev}\n${line}` : line));
+  }, []);
 
   const handleSignAuthorization = useCallback(async () => {
     setAuthorization(null);
@@ -146,82 +185,100 @@ export default function Eip7702() {
     setAuthorizationOwner(null);
     setAuthLoading(true);
     try {
-      const chainId = resolvedChainId;
+      const owner = demoAuthorizationAccount.address;
+      setWalletAddress(owner);
 
-      const account = demoAuthorizationAccount;
+      const chainId = resolvedChainId;
       const nonce =
         nonceInput.trim().length > 0
           ? Number(nonceInput)
           : await getPublicClient().getTransactionCount({
-              address: account.address,
+              address: owner,
             });
       if (!Number.isFinite(nonce)) {
         throw new Error("Unable to determine nonce for demo signer.");
       }
+
       setAuthStatus(
-        `Signing authorization via demo signer ${shorten(
-          account.address
-        )} for Simple7702Account ${SIMPLE_7702_ACCOUNT} (chainId=${chainId}, nonce=${nonce}).`
+        `Signing authorization via demo SimpleAccount ${shorten(
+          owner
+        )} (chainId=${chainId}, nonce=${nonce}).`
       );
-      const signature = await account.signAuthorization({
-        contractAddress: SIMPLE_7702_ACCOUNT,
+
+      const nonceValue = Number(nonce);
+      const authSignature = await demoAuthorizationAccount.signAuthorization({
+        address: SIMPLE_7702_ACCOUNT,
         chainId,
-        nonce,
+        nonce: nonceValue,
       });
-      setAuthorization(signature);
-      setAuthorizationOwner(account.address);
+
+      const auth = {
+        ...authSignature,
+        chainId,
+        nonce: nonceValue,
+      } as SignedAuthorization;
+
+      setAuthorization(auth);
+      setAuthorizationOwner(owner);
+
       try {
         const recovered = await recoverAuthorizationAddress({
-          authorization: signature,
+          authorization: auth,
         } as any);
         console.log(
           "[7702] recovered signer =",
           recovered,
           "expected =",
-          account.address
+          owner
         );
         console.log(
           "[7702] serialized tuple =",
-          serializeAuthorizationForDebug(signature)
+          serializeAuthorizationForDebug(auth)
         );
       } catch (e) {
         console.log("[7702] recoverAuthorizationAddress failed", e);
       }
       setAuthStatus(
-        "Authorization signed. Copy the payload below for the Type-4 transaction."
+        "Authorization signed with demo SimpleAccount. Proceed to Step 2."
       );
     } catch (error: any) {
       console.error(error);
-      setAuthStatus(
-        error?.message ??
-          "Failed to sign authorization. Try switching to demo signer."
-      );
+      setAuthStatus(error?.message ?? "Failed to sign authorization.");
     } finally {
       setAuthLoading(false);
     }
-  }, [demoAuthorizationAccount, nonceInput, resolvedChainId]);
+  }, [nonceInput, resolvedChainId]);
 
   const handleRegisterAllowlist = useCallback(async () => {
     if (!token) {
       setAllowlistStatus("Sign in to register allowlist entries.");
       return;
     }
+    const owner = authorizationOwner ?? walletAddress;
+    if (!owner || !isEthAddress(owner)) {
+      setAllowlistStatus("Connect your wallet first.");
+      return;
+    }
+    if (!nftContractAddress || !isEthAddress(nftContractAddress)) {
+      setAllowlistStatus("NFT contract address is not configured.");
+      return;
+    }
     setAllowlistLoading(true);
     try {
       await api
-        .addUser(token, demoAuthorizationAccount.address)
+        .addUser(token, owner)
         .catch((error) => {
           if (error instanceof ApiError && error.status === 409) return;
           throw error;
         });
       await api
         .addContract(token, {
-          address: USDC_ADDRESS,
-          name: "USDC",
+          address: nftContractAddress,
+          name: "SENTRA_NFT",
           functions: [
             {
-              selector: USDC_APPROVE_SELECTOR,
-              signature: "approve(address,uint256)",
+              selector: SAFE_MINT_SELECTOR,
+              signature: "safeMint(address,string)",
             },
           ],
         })
@@ -230,7 +287,7 @@ export default function Eip7702() {
           throw error;
         });
       setAllowlistStatus(
-        "Demo signer + USDC approve selector registered for sponsorship."
+        "Wallet + SENTRA NFT mint selector registered for sponsorship."
       );
     } catch (error: any) {
       console.error(error);
@@ -238,7 +295,7 @@ export default function Eip7702() {
     } finally {
       setAllowlistLoading(false);
     }
-  }, [demoAuthorizationAccount.address, token]);
+  }, [authorizationOwner, nftContractAddress, token, walletAddress]);
 
   const handlePrepareUserOperation = useCallback(async () => {
     setPreparedOp(null);
@@ -255,14 +312,19 @@ export default function Eip7702() {
       setPayloadStatus("EntryPoint address is required.");
       return;
     }
-    if (!approveSpender || !isEthAddress(approveSpender)) {
-      setPayloadStatus("Approve spender address is required.");
+    if (!nftContractAddress || !isEthAddress(nftContractAddress)) {
+      setPayloadStatus("NFT contract address is required.");
+      return;
+    }
+    const recipient = authorizationOwner ?? walletAddress;
+    if (!recipient || !isEthAddress(recipient)) {
+      setPayloadStatus("Demo signer unavailable. Sign Step 1 first.");
       return;
     }
     appendPayloadStatus("Preparing sponsored UserOperation…");
     setPayloadLoading(true);
     try {
-      const eoaOwner = authorizationOwner ?? demoAuthorizationAccount.address;
+      const eoaOwner = recipient;
       const publicClient = getPublicClient();
 
       const smartAccount = await toSimpleSmartAccount({
@@ -289,16 +351,16 @@ export default function Eip7702() {
       } catch (e) {
         console.log("[7702] recoverAuthorizationAddress (before UO) failed", e);
       }
-      const eoaSender = demoAuthorizationAccount.address as `0x${string}`;
+      const eoaSender = eoaOwner as `0x${string}`;
 
-      const approveData = encodeFunctionData({
-        abi: ERC20_APPROVE_ABI,
-        functionName: "approve",
-        args: [approveSpender as `0x${string}`, DEFAULT_APPROVE_AMOUNT],
+      const mintData = encodeFunctionData({
+        abi: SAFE_MINT_ABI,
+        functionName: "safeMint",
+        args: [recipient as `0x${string}`, NFT_METADATA_URI],
       });
 
       const prepared = await bundler.prepareUserOperation({
-        calls: [{ to: USDC_ADDRESS, data: approveData }],
+        calls: [{ to: nftContractAddress as `0x${string}`, data: mintData }],
         callGasLimit: DEFAULT_CALL_GAS_LIMIT,
         verificationGasLimit: DEFAULT_VERIFICATION_GAS_LIMIT,
         preVerificationGas: DEFAULT_PRE_VERIFICATION_GAS,
@@ -336,8 +398,8 @@ export default function Eip7702() {
         entryPointAddress: entryPoint as `0x${string}`,
         chainId,
         context: {
-          target: USDC_ADDRESS,
-          selector: USDC_APPROVE_SELECTOR,
+          target: nftContractAddress as `0x${string}`,
+          selector: SAFE_MINT_SELECTOR,
         },
       });
 
@@ -354,8 +416,8 @@ export default function Eip7702() {
         entryPointAddress: entryPoint as `0x${string}`,
         chainId,
         context: {
-          target: USDC_ADDRESS,
-          selector: USDC_APPROVE_SELECTOR,
+          target: nftContractAddress as `0x${string}`,
+          selector: SAFE_MINT_SELECTOR,
         },
       });
 
@@ -387,20 +449,24 @@ export default function Eip7702() {
           }
         : null;
 
-      const opWithEstimates: PreparedOperation = {
+      const opBeforeAuth: PreparedOperation = {
         ...(sponsoredOp as PreparedOperation),
         callGasLimit: estimateResult.callGasLimit,
         verificationGasLimit: estimateResult.verificationGasLimit,
         preVerificationGas: estimateResult.preVerificationGas,
         authorization: normalizedAuth ?? undefined,
       };
+      const opWithEstimates = applyAuthorizationToUserOperation(
+        opBeforeAuth,
+        normalizedAuth
+      );
       smartAccountRef.current = smartAccount;
       setPreparedUnsignedOp(opWithEstimates);
       setPreparedOp(opWithEstimates);
       setPreparedContext({
         entryPoint: entryPoint as `0x${string}`,
         chainId,
-        target: USDC_ADDRESS,
+        target: nftContractAddress as `0x${string}`,
       });
       console.log("[7702] UO keys", Object.keys(opWithEstimates));
       console.log(
@@ -417,9 +483,11 @@ export default function Eip7702() {
           "[7702] serialized tuple =",
           serializeAuthorizationForDebug(authorization)
         );
+        console.log(
+          "[7702] final authorization tuple =",
+          (opWithEstimates as any).authorizationList
+        );
       }
-      const dbgAuth = (opWithEstimates as any).authorization;
-      console.log("[7702] final authorization =", dbgAuth);
       setSubmitStatus("");
       appendPayloadStatus(
         "UserOperation ready. Adjust gas sliders (default 100%) before sending."
@@ -432,11 +500,13 @@ export default function Eip7702() {
     }
   }, [
     appendPayloadStatus,
-    approveSpender,
     authorization,
     entryPoint,
+    nftContractAddress,
     resolvedChainId,
     token,
+    authorizationOwner,
+    walletAddress,
   ]);
 
   const handleSubmitUserOperation = useCallback(async () => {
@@ -448,8 +518,12 @@ export default function Eip7702() {
       setSubmitStatus("Smart account context missing. Re-run Step 2.");
       return;
     }
+    if (!authorization) {
+      setSubmitStatus("Sign the EIP-7702 authorization again before sending.");
+      return;
+    }
     setSubmitLoading(true);
-    setSubmitStatus("Signing + submitting UserOperation via bundler…");
+    setSubmitStatus("1. Adjusting gas plan with your sliders…");
     try {
       const scaledCallGasLimit = scaleGasValue(
         gasEstimates.callGasLimit,
@@ -472,6 +546,7 @@ export default function Eip7702() {
         preVerificationGas: scaledPreVerificationGas,
       };
 
+      appendSubmitStatus("2. Requesting paymaster sponsorship…");
       const paymasterClient = getPaymasterClient(token);
       const paymasterData = await paymasterClient.getPaymasterData({
         sender: opWithScaling.sender,
@@ -491,7 +566,7 @@ export default function Eip7702() {
         chainId: preparedContext.chainId,
         context: {
           target: preparedContext.target,
-          selector: USDC_APPROVE_SELECTOR,
+          selector: SAFE_MINT_SELECTOR,
         },
       });
 
@@ -507,28 +582,49 @@ export default function Eip7702() {
           opWithScaling.paymasterPostOpGasLimit,
       };
 
+      appendSubmitStatus("3. Signing UserOperation via wallet…");
       const smartAccount = smartAccountRef.current;
+      const normalizedAuth = authorization;
       const signature = await smartAccount.signUserOperation(opWithPaymaster);
       const signedOp = {
         ...opWithPaymaster,
         signature,
       };
-      setPreparedOp(signedOp);
+      const finalSignedOp = applyAuthorizationToUserOperation(
+        signedOp,
+        normalizedAuth
+      );
+      console.log("[7702] final UO before send", {
+        sender: finalSignedOp.sender,
+        authorization: (finalSignedOp as any).authorization,
+        authorizationList: (finalSignedOp as any).authorizationList,
+        eip7702Auth: (finalSignedOp as any).eip7702Auth,
+      });
+      setPreparedOp(finalSignedOp);
 
-      const bundler = getBundlerClientBySimpleAccount(smartAccount);
-      const hash = await bundler.sendUserOperation(signedOp);
-      setSubmitStatus(`UserOperation sent. Hash: ${hash}`);
-      const receipt = await bundler.waitForUserOperationReceipt({ hash });
-      setSubmitStatus(
-        `UserOperation confirmed in block ${receipt.receipt.blockNumber}.`
+      const bundlerSendClient = getBundlerClient(preparedContext.chainId);
+      appendSubmitStatus("4. Sending UserOperation to bundler…");
+      const hash = await bundlerSendClient.sendUserOperation({
+        entryPointAddress: preparedContext.entryPoint,
+        ...(finalSignedOp as any),
+      });
+      appendSubmitStatus(`   Bundler accepted. Hash: ${hash}`);
+      appendSubmitStatus("5. Waiting for confirmation…");
+      const receipt = await bundlerSendClient.waitForUserOperationReceipt({
+        hash,
+      });
+      appendSubmitStatus(
+        `6. Confirmed in block ${receipt.receipt.blockNumber}.`
       );
     } catch (error: any) {
       console.error(error);
-      setSubmitStatus(error?.message ?? String(error));
+      appendSubmitStatus(`failed: ${error?.message ?? String(error)}`);
     } finally {
       setSubmitLoading(false);
     }
   }, [
+    appendSubmitStatus,
+    authorization,
     gasEstimates,
     gasScaling.call,
     gasScaling.preVerification,
@@ -543,24 +639,22 @@ export default function Eip7702() {
       <PageHeader title="EIP-7702" />
 
       <section className="surface-card space-y-4 p-6">
-        <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
-          Pattern A
-        </div>
         <h3 className="text-xl font-semibold text-slate-50">
           7702 Delegation + ERC-4337 Paymaster
         </h3>
         <ol className="list-decimal space-y-2 pl-5 text-sm text-slate-200">
           <li>
             Use <span className="font-mono">signAuthorization</span> to delegate
-            your EOA to our Simple7702Account implementation.
+            your wallet to our Simple7702Account implementation.
           </li>
           <li>
-            Submit a Type-4 transaction (EIP-7702) from the same EOA so it
+            Submit a Type-4 transaction (EIP-7702) from the same wallet so it
             temporarily behaves like a smart account.
           </li>
           <li>
-            Inside that transaction, send an ERC-4337 UserOperation (here:
-            USDC’s <code>approve</code>) and let the Paymaster sponsor the gas.
+            Inside that transaction, send an ERC-4337 UserOperation that mints
+            the SENTRA NFT to your wallet, and let the Paymaster sponsor the
+            gas.
           </li>
         </ol>
         <div className="rounded border border-slate-700/60 bg-slate-900/40 p-4 text-sm text-slate-300">
@@ -569,14 +663,18 @@ export default function Eip7702() {
       </section>
 
       <section className="surface-card space-y-4 p-6">
-        <header className="flex items-center justify-between">
-          <div>
+        <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-1.5">
             <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
               Step 1
             </div>
             <h3 className="text-lg font-semibold text-slate-50">
               Generate EIP-7702 Authorization
             </h3>
+            <p className="text-sm text-slate-400 leading-relaxed">
+              Your MetaMask wallet signs the lightweight 7702 authorization that
+              powers the sponsored mint.
+            </p>
           </div>
           <button
             onClick={handleSignAuthorization}
@@ -589,21 +687,16 @@ export default function Eip7702() {
 
         <div className="rounded border border-amber-400/40 bg-amber-500/10 p-3 text-xs text-amber-100">
           <div>
-            Demo signer address:{" "}
+            Demo signer:{" "}
             <span className="font-mono">
-              {demoAuthorizationAccount.address}
+              {walletAddress ? walletAddress : "Not configured"}
             </span>
           </div>
           <div className="mt-1 text-amber-200/80">
-            Private key: {shortenPrivateKey(DEMO_AUTH_PRIVATE_KEY)} (sandbox use
-            only – do not fund on mainnet).
+            This built-in demo SimpleAccount signs the EIP-7702 authorization
+            and receives the SENTRA NFT.
           </div>
         </div>
-        <div className="rounded border border-slate-800 bg-slate-900/60 p-3 text-sm text-slate-200">
-          Delegating to Simple7702Account:{" "}
-          <span className="font-mono">{SIMPLE_7702_ACCOUNT}</span>
-        </div>
-
         <div className="grid gap-3 md:grid-cols-2">
           <Field
             label="Chain ID"
@@ -622,38 +715,40 @@ export default function Eip7702() {
         {authStatus && <StatusLog title="Authorization" value={authStatus} />}
 
         {authorization ? (
-          <pre className="surface-card surface-card--muted overflow-x-auto rounded border border-slate-800 p-3 text-xs text-slate-200">
-            {formatJson(authorization)}
-          </pre>
+          <div className="rounded border border-emerald-400/30 bg-emerald-400/5 p-3 text-xs text-emerald-200">
+            Authorization signed and stored locally for the next step.
+          </div>
         ) : null}
       </section>
 
       <section className="surface-card space-y-4 p-6">
-        <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
+        <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-1.5">
             <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
               Step 2
             </div>
             <h3 className="text-lg font-semibold text-slate-50">
-              Build Sponsored UserOperation
+              Build Sponsored NFT Mint
             </h3>
+            <p className="text-sm text-slate-400 leading-relaxed">
+              Register the allowlist pair, fetch the bundler gas plan, and
+              inspect the sliders before you submit.
+            </p>
           </div>
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-row flex-wrap gap-3 md:flex-nowrap">
             <button
               onClick={handleRegisterAllowlist}
               className="btn-secondary"
               disabled={allowlistLoading}
             >
-              {allowlistLoading
-                ? "Registering Allowlist…"
-                : "Allowlist Demo Pair"}
+              {allowlistLoading ? "Registering…" : "Register Sponsorship"}
             </button>
             <button
               onClick={handlePrepareUserOperation}
               className="btn-primary"
               disabled={payloadLoading}
             >
-              {payloadLoading ? "Preparing…" : "Prepare UserOperation"}
+              {payloadLoading ? "Preparing…" : "Prepare UserOp"}
             </button>
           </div>
         </header>
@@ -666,21 +761,10 @@ export default function Eip7702() {
             placeholder="0xEntryPoint..."
           />
           <Field
-            label="Approve Spender"
-            value={approveSpender}
-            onChange={(val) => setApproveSpender(val as `0x${string}` | "")}
-            placeholder="0xSpender..."
+            label="NFT Recipient"
+            value={walletAddress}
+            placeholder="Connected wallet"
           />
-        </div>
-
-        <div className="rounded border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300">
-          Target contract: <span className="font-mono">{USDC_ADDRESS}</span>{" "}
-          (USDC)
-          <br />
-          Calldata:{" "}
-          <code>
-            approve(spender, {`${DEFAULT_APPROVE_AMOUNT.toString()}`} wei)
-          </code>
         </div>
 
         {allowlistStatus && (
@@ -731,20 +815,26 @@ export default function Eip7702() {
         ) : null}
 
         {preparedOp ? (
-          <pre className="surface-card surface-card--muted w-full overflow-hidden whitespace-pre-wrap break-all rounded border border-slate-800 p-3 text-xs text-slate-200">
-            {formatJson(preparedOp)}
-          </pre>
+          <div className="rounded border border-emerald-400/30 bg-emerald-400/5 p-3 text-xs text-emerald-200">
+            UserOperation ready. Adjust gas sliders if needed, then submit.
+          </div>
         ) : null}
       </section>
 
       <section className="surface-card space-y-4 p-6">
-        <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
-          Step 3
-        </div>
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <h3 className="text-lg font-semibold text-slate-50">
-            Submit UserOperation via Bundler
-          </h3>
+        <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-1.5">
+            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
+              Step 3
+            </div>
+            <h3 className="text-lg font-semibold text-slate-50">
+              Submit UserOperation via Bundler
+            </h3>
+            <p className="text-sm text-slate-400 leading-relaxed">
+              Fire the final sponsored transaction. Progress appears in the
+              shipping log and a details link shows up when confirmed.
+            </p>
+          </div>
           <button
             onClick={handleSubmitUserOperation}
             className="btn-primary"
@@ -752,20 +842,26 @@ export default function Eip7702() {
               submitLoading ||
               !preparedUnsignedOp ||
               !gasEstimates ||
-              !preparedContext
+              !preparedContext ||
+              !authorization
             }
           >
             {submitLoading ? "Submitting…" : "Send UserOperation"}
           </button>
-        </div>
-        <p className="text-sm text-slate-300">
-          Sends the prepared UserOperation through the bundler. Requires Steps 1
-          & 2 to complete so that the operation includes{" "}
-          <code>eip7702Auth</code>
-          and paymaster sponsorship.
-        </p>
+        </header>
         {submitStatus && <StatusLog title="Submission" value={submitStatus} />}
       </section>
+
+      <WalletNftsCard
+        owner={walletAddress}
+        authToken={token}
+        title="Demo Wallet Holdings"
+        subtitle="SENTRA NFTs currently held by the built-in demo SimpleAccount."
+        disconnectedMessage="Demo signer not available."
+        emptyMessage={null}
+        loadingMessage="Loading demo wallet holdings…"
+        refreshSignal={walletRefreshSignal}
+      />
     </div>
   );
 }
@@ -778,7 +874,7 @@ function Field({
 }: {
   label: string;
   value: string;
-  onChange: (next: string) => void;
+  onChange?: (next: string) => void;
   placeholder?: string;
 }) {
   return (
@@ -787,7 +883,8 @@ function Field({
       <input
         className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-sm outline-none"
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => onChange?.(event.target.value)}
+        readOnly={!onChange}
         placeholder={placeholder}
       />
     </div>
@@ -846,31 +943,93 @@ function scaleGasValue(base: bigint, percent: number) {
 }
 
 function StatusLog({ title, value }: { title: string; value: string }) {
+  const lines = value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
   return (
-    <div className="max-w-full">
-      <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
+    <div className="surface-card surface-card--muted p-3 text-xs text-slate-200">
+      <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-slate-400">
         {title}
       </div>
-      <pre
-        className="mt-2 w-full overflow-hidden whitespace-pre-wrap rounded border border-slate-800 bg-slate-950/40 p-3 text-xs text-slate-200"
-        style={{
-          maxWidth: "100%",
-          wordBreak: "break-all",
-          overflowWrap: "anywhere",
-        }}
-      >
-        {value}
-      </pre>
+      {lines.length === 0 ? (
+        <div className="text-slate-400">No activity yet.</div>
+      ) : (
+        <ol className="space-y-2">
+          {lines.map((line, index) => {
+            const eventData = parseEventStatusLine(line);
+            if (eventData) {
+              const eventStatus = eventData.status?.toLowerCase();
+              const dotClass =
+                eventStatus === "success"
+                  ? "bg-emerald-500"
+                  : eventStatus === "failed"
+                  ? "bg-rose-500"
+                  : "bg-slate-600";
+              const textClass =
+                eventStatus === "success"
+                  ? "text-emerald-300"
+                  : eventStatus === "failed"
+                  ? "text-rose-300"
+                  : "text-slate-200";
+              return (
+                <li
+                  key={`${line}-${index}`}
+                  className="flex items-start gap-3"
+                >
+                  <div className="mt-[3px] flex flex-col items-center">
+                    <span className={`h-2 w-2 rounded-full ${dotClass}`} />
+                    {index < lines.length - 1 && (
+                      <span className="mt-1 h-4 w-px bg-slate-700" />
+                    )}
+                  </div>
+                  <span className={`${textClass} flex flex-wrap items-center gap-2`}>
+                    Bundler reported {eventData.status ?? "update"}.
+                    {eventData.userOpHash ? (
+                      <Link
+                        to={`/app/details/${eventData.userOpHash}`}
+                        className="text-emerald-200 underline"
+                      >
+                        View details
+                      </Link>
+                    ) : null}
+                  </span>
+                </li>
+              );
+            }
+            const isError = line.toLowerCase().startsWith("failed");
+            const isDone =
+              line.toLowerCase().includes("submitted") ||
+              line.toLowerCase().includes("confirmed");
+            const isActive = !isError && !isDone && index === lines.length - 1;
+            const dotClass = isError
+              ? "bg-rose-500"
+              : isDone
+              ? "bg-emerald-500"
+              : isActive
+              ? "bg-emerald-300"
+              : "bg-slate-600";
+            const textClass = isError
+              ? "text-rose-300"
+              : isDone
+              ? "text-emerald-300"
+              : "text-slate-200";
+            return (
+              <li key={`${line}-${index}`} className="flex items-start gap-3">
+                <div className="mt-[3px] flex flex-col items-center">
+                  <span className={`h-2 w-2 rounded-full ${dotClass}`} />
+                  {index < lines.length - 1 && (
+                    <span className="mt-1 h-4 w-px bg-slate-700" />
+                  )}
+                </div>
+                <span className={textClass}>{line}</span>
+              </li>
+            );
+          })}
+        </ol>
+      )}
     </div>
-  );
-}
-
-function formatJson(value: unknown) {
-  return JSON.stringify(
-    value,
-    (_, current) =>
-      typeof current === "bigint" ? current.toString() : current,
-    2
   );
 }
 
@@ -903,10 +1062,66 @@ function serializeAuthorizationForBundler(auth: any) {
   }
 }
 
-function shorten(value: `0x${string}`) {
-  return `${value.slice(0, 8)}…${value.slice(-6)}`;
+function applyAuthorizationToUserOperation<T extends Record<string, any>>(
+  op: T,
+  auth: SignedAuthorization | null
+): T {
+  const next = { ...op } as Record<string, any>;
+  delete next.authorizationList;
+  delete next.eip7702Auth;
+
+  if (!auth) {
+    delete next.authorization;
+    return next as T;
+  }
+
+  const chainIdBig =
+    typeof auth.chainId === "bigint"
+      ? (auth.chainId as bigint)
+      : BigInt(auth.chainId);
+  const nonceBig =
+    typeof auth.nonce === "bigint" ? (auth.nonce as bigint) : BigInt(auth.nonce);
+
+  const normalizedAuth = {
+    ...auth,
+    address:
+      ((auth as any).address?.toLowerCase?.() as `0x${string}`) ??
+      ((auth.address ?? "") as `0x${string}`),
+    chainId: Number(chainIdBig),
+    nonce: typeof auth.nonce === "number" ? auth.nonce : Number(nonceBig),
+  } as SignedAuthorization;
+
+  (next as any).authorization = normalizedAuth;
+
+  const tuple = serializeAuthorizationForBundler({
+    ...normalizedAuth,
+    chainId: chainIdBig,
+    nonce: nonceBig,
+  });
+  if (tuple) {
+    (next as any).authorizationList = [tuple];
+  }
+
+  const normalizedV =
+    typeof auth.v === "bigint"
+      ? Number(auth.v)
+      : typeof auth.v === "string"
+      ? Number(auth.v)
+      : auth.v ?? 27;
+  const yParityValue = auth.yParity ?? (normalizedV === 28 ? 1 : 0);
+  const eip7702Entry = {
+    address: normalizedAuth.address,
+    chainId: toHex(chainIdBig),
+    nonce: toHex(nonceBig),
+    r: normalizedAuth.r,
+    s: normalizedAuth.s,
+    yParity: toHex(BigInt(yParityValue)),
+  };
+  (next as any).eip7702Auth = eip7702Entry;
+
+  return next as T;
 }
 
-function shortenPrivateKey(value: string) {
-  return `${value.slice(0, 10)}…${value.slice(-8)}`;
+function shorten(value: `0x${string}`) {
+  return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import PageHeader from "../components/layout/PageHeader";
 import { CalculateSimpleAccountCard } from "../components/playground/CalculateSimpleAccountCard";
 import { MintSponsoredCard } from "../components/playground/MintSponsoredCard";
+import { WalletNftsCard } from "../components/playground/WalletNftsCard";
 import { usePlaygroundStoredState } from "../hooks/usePlaygroundStoredState";
 import { useAuth } from "../state/auth";
 import { api } from "../lib/api";
@@ -91,7 +92,7 @@ export default function Playground() {
           {overviewItems.map((item) => (
             <div
               key={item.label}
-              className="rounded border border-slate-800/60 bg-slate-900/50 p-3"
+              className="w-fit rounded border border-slate-800/60 bg-slate-900/50 p-3"
             >
               <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
                 {item.label}
@@ -100,6 +101,7 @@ export default function Playground() {
                 className={`mt-1 font-mono text-sm ${
                   item.ok ? "text-emerald-300" : "text-amber-200"
                 }`}
+                style={{ maxWidth: "45ch" }}
               >
                 {item.value}
               </div>
@@ -129,6 +131,14 @@ export default function Playground() {
         simpleAccountSalt={storedState.lastSalt ?? "0"}
         simpleAccountOwner={storedState.simpleAccountOwner ?? ""}
         entryPointHint={storedState.paymasterEntryPoint ?? ""}
+      />
+      <WalletNftsCard
+        owner={
+          storedState.simpleAccount
+            ? (storedState.simpleAccount as `0x${string}`)
+            : ""
+        }
+        authToken={token}
       />
     </div>
   );

@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { formatWeiToEth, getPublicClient, getWalletClient } from "../../lib/viem";
+import {
+  formatWeiToEth,
+  getPublicClient,
+  getWalletClient,
+} from "../../lib/viem";
 import { useAuth } from "../../state/auth";
 
 type PageHeaderProps = {
@@ -89,9 +93,28 @@ export default function PageHeader({ title }: PageHeaderProps) {
       await hydrateWallet();
     } catch (error) {
       console.error(error);
-      window.alert("Failed to connect wallet. Check if a web3 wallet is available.");
+      window.alert(
+        "Failed to connect wallet. Check if a web3 wallet is available."
+      );
     }
   }, [hydrateWallet]);
+
+  const disconnectWallet = useCallback(async () => {
+    logout();
+    const eth = (window as any).ethereum;
+    if (eth?.request) {
+      try {
+        await eth.request({
+          method: "wallet_revokePermissions",
+          params: [{ eth_accounts: {} }],
+        });
+      } catch (error) {
+        console.warn("Failed to revoke wallet permissions", error);
+      }
+    }
+    setAccount(null);
+    setBalance(null);
+  }, [logout]);
 
   const truncatedAccount = useMemo(() => {
     if (!account) return "";
@@ -115,8 +138,8 @@ export default function PageHeader({ title }: PageHeaderProps) {
             Connect Wallet
           </button>
         )}
-        <button onClick={logout} className="btn-ghost">
-          Logout
+        <button onClick={disconnectWallet} className="btn-ghost">
+          Disconnect wallet
         </button>
       </div>
     </div>
