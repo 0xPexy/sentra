@@ -1,5 +1,6 @@
 import type { ChangeEvent } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { encodeFunctionData } from "viem";
 import type {
   SmartAccount,
@@ -19,6 +20,11 @@ import {
 } from "../../lib/viem";
 import { SAFE_MINT_ABI } from "../../lib/userOpLegacy";
 import { useNftTotalSupply } from "../../hooks/useNftTotalSupply";
+import { useEventStream } from "../../hooks/useEventStream";
+import {
+  formatEventStatusLine,
+  parseEventStatusLine,
+} from "../../lib/events";
 
 type GasEstimates = {
   callGasLimit: bigint;
@@ -42,7 +48,7 @@ const DEFAULT_CALL_GAS_LIMIT = 1_000_000n;
 const DEFAULT_PRE_VERIFICATION_GAS = 1_000_000n;
 const DEFAULT_VERIFICATION_GAS_LIMIT = 500_000n;
 const SAFE_MINT_SELECTOR = toSelector("safeMint(address,string)");
-const NFT_METADATA_URI =
+export const NFT_METADATA_URI =
   import.meta.env.VITE_SENTRA_NFT_URI ??
   "http://localhost:8080/api/v1/playground/nft";
 type PreparedUserOperation = Omit<UserOperation<"0.8">, "signature">;
@@ -90,6 +96,10 @@ export function MintSponsoredCard({
     name?: string;
     description?: string;
   } | null>(null);
+  const eventForSender = useEventStream(
+    isEthAddress(senderAddress) ? (senderAddress as `0x${string}`) : undefined
+  );
+  const lastEventHashRef = useRef<string | null>(null);
 
   const invalidatePrepared = useCallback(() => {
     setPreparedAccount(null);
@@ -180,7 +190,16 @@ export function MintSponsoredCard({
 
   useEffect(() => {
     invalidatePrepared();
+    lastEventHashRef.current = null;
   }, [senderAddress, invalidatePrepared]);
+
+  useEffect(() => {
+    if (!eventForSender?.userOpHash) return;
+    if (eventForSender.userOpHash === lastEventHashRef.current) return;
+    lastEventHashRef.current = eventForSender.userOpHash;
+    const line = formatEventStatusLine(eventForSender);
+    setStatus((prev) => (prev ? `${prev}\n${line}` : line));
+  }, [eventForSender]);
 
   useEffect(() => {
     let active = true;
@@ -436,12 +455,8 @@ export function MintSponsoredCard({
         </span>
         . The Paymaster sponsors the entire UserOperation.
       </p>
-      <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-emerald-200">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-        Gas Sponsored · 0 Fee Mint
-      </div>
       {nftPreview?.image ? (
-        <div className="flex items-center gap-4 rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+        <div className="inline-flex items-center gap-4 rounded-lg border border-slate-800 bg-slate-900/40 p-4">
           <img
             src={nftPreview.image}
             alt={nftPreview?.name ?? "SENTRA NFT"}
@@ -466,12 +481,19 @@ export function MintSponsoredCard({
           Loading preview from {NFT_METADATA_URI}
         </div>
       )}
+      <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-emerald-200">
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+        Gas Sponsored · 0 Fee Mint
+      </div>
       <div className="grid gap-3 md:grid-cols-3">
         <div className="md:col-span-3">
           <div className="mb-1 text-sm text-slate-400">
             Smart Account (Sender)
           </div>
-          <div className="rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-slate-200">
+          <div
+            className="rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-slate-200"
+            style={{ maxWidth: "45ch" }}
+          >
             {isEthAddress(senderAddress)
               ? senderAddress
               : "Run Calculate Simple Account to populate."}
@@ -481,21 +503,29 @@ export function MintSponsoredCard({
           <div className="mb-1 text-sm text-slate-400">
             Target (ERC-721 Mintable)
           </div>
-          <input
-            className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono"
-            placeholder="0x..."
-            value={target}
-            onChange={(event: ChangeEvent<HTMLInputElement>) => {
-              setTarget(event.target.value as `0x${string}` | "");
-              invalidatePrepared();
-            }}
-          />
+          <div
+            className="rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-slate-200"
+            style={{ maxWidth: "45ch" }}
+          >
+            <input
+              className="w-full bg-transparent text-slate-200 outline-none placeholder:text-slate-500"
+              placeholder="0x..."
+              value={target}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                setTarget(event.target.value as `0x${string}` | "");
+                invalidatePrepared();
+              }}
+            />
+          </div>
         </div>
         <div className="md:col-span-3">
           <div className="mb-1 text-sm text-slate-400">
             Recipient (Calculated Smart Account)
           </div>
-          <div className="rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-slate-200">
+          <div
+            className="rounded border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-slate-200"
+            style={{ maxWidth: "45ch" }}
+          >
             {isEthAddress(calculatedRecipient)
               ? calculatedRecipient
               : "Run Calculate Simple Account to populate."}
@@ -568,6 +598,46 @@ export function MintSponsoredCard({
               .map((line) => line.trim())
               .filter((line) => line.length > 0)
               .map((line, index, all) => {
+                const eventPayload = parseEventStatusLine(line);
+                if (eventPayload) {
+                  const eventStatus = eventPayload.status?.toLowerCase();
+                  const dotClass =
+                    eventStatus === "success"
+                      ? "bg-emerald-500"
+                      : eventStatus === "failed"
+                      ? "bg-rose-500"
+                      : "bg-slate-600";
+                  const textClass =
+                    eventStatus === "success"
+                      ? "text-emerald-300"
+                      : eventStatus === "failed"
+                      ? "text-rose-300"
+                      : "text-slate-200";
+                  return (
+                    <li
+                      key={`${line}-${index}`}
+                      className="flex items-start gap-3"
+                    >
+                      <div className="mt-[3px] flex flex-col items-center">
+                        <span className={`h-2 w-2 rounded-full ${dotClass}`} />
+                        {index < all.length - 1 && (
+                          <span className="mt-1 h-4 w-px bg-slate-700" />
+                        )}
+                      </div>
+                      <span className={`${textClass} flex flex-wrap items-center gap-2`}>
+                        Bundler reported {eventPayload.status ?? "update"}.
+                        {eventPayload.userOpHash ? (
+                          <Link
+                            to={`/details/${eventPayload.userOpHash}`}
+                            className="text-emerald-200 underline"
+                          >
+                            View details
+                          </Link>
+                        ) : null}
+                      </span>
+                    </li>
+                  );
+                }
                 const isError = line.toLowerCase().startsWith("failed");
                 const isDone =
                   line.toLowerCase().includes("submitted") ||
