@@ -43,100 +43,66 @@ The console is designed to look and feel like something an infra/payments team w
 
 ### 2.1 Stats & Details (Operations view)
 
-**Stats**
+- **Stats**
+  - Overview cards for total sponsored gas, average gas used, success rate, and total UserOps.
+  - Recent UserOps table (hash, sender, target, selector, status, time) with deep‑links into the Details page.
+- **Details**
+  - Summary cards for status, block + block time, UserOp hash + Tx hash.
+  - Gas breakdown by phase (pre‑verification, validation, execution, post‑op).
+  - Asset movements table (address / token / tokenId / delta) with ETH values normalized to ETH units.
 
-- High‑level paymaster metrics:
-  - Total sponsored gas
-  - Average gas used
-  - Success rate
-  - Total sponsored UserOps
-- Recent UserOps table:
-  - Columns: `userOpHash`, `sender`, `target`, `selector`, `status`, `time`.
-  - Each row deep‑links into the Details module.
+<p align="center">
+  <img src="public/pages/stats.png" alt="Stats dashboard" width="360" />
+  <img src="public/pages/details-summary.png" alt="Details summary view" width="360" />
+</p>
 
-**Details**
-
-- Load by `userOpHash` against the backend’s operation/gas endpoints.
-- Summary cards:
-  - Status
-  - Block + Block Time (one row)
-  - UserOp Hash + Tx Hash (one row)
-- Gas section:
-  - Per‑phase breakdown: pre‑verification, validation, execution, post‑op.
-  - Shows limits vs actual usage to highlight under‑provisioned stages.
-- Asset movements:
-  - Tabular view: `address / token / tokenId / delta`.
-  - ETH deltas normalized to ETH units for readability.
+<p align="center">
+  <img src="public/pages/details-gas-assets.png" alt="Details gas and asset movements" width="720" />
+</p>
 
 ### 2.2 Playground (0‑Fee NFT Mint)
 
-**Smart Account setup**
+- Computes a SimpleAccount‑style smart account from factory + owner + salt, and uses a SENTRA ERC‑721 contract as the mint target.
+- Runs a fully sponsored `safeMint(address,string)` via viem + Alto bundler + an ERC‑7677 paymaster.
+- Provides a Gas Scaling UI (0–150%) so you can see how changing limits affects success/failure.
+- Shows a shipping‑style Mint Progress timeline that updates in real time and links into the Details page.
+- Includes an NFT holdings card that refreshes automatically when a mint succeeds.
 
-- Compute a SimpleAccount‑style address from:
-  - `factory` + `owner` + `salt` → deterministic smart account address.
-- The NFT contract (SENTRA ERC‑721) is discovered from the backend and used as the mint target.
-
-**Sponsored mint flow**
-
-- Uses viem + Alto bundler to run a fully sponsored `safeMint(address,string)` via ERC‑4337:
-  1. Encode `safeMint(recipient, NFT_METADATA_URI)`.
-  2. Call Alto bundler `prepareUserOperation` with default gas envelopes.
-  3. Call paymaster stub (`pm_getPaymasterStubData`) to attach preliminary budgets.
-  4. Call bundler `estimateUserOperationGas` to derive call/verification/pre‑verification limits.
-  5. Present a Gas Scaling UI to adjust those values before send.
-  6. Call paymaster data endpoint (`pm_getPaymasterData`) to finalize sponsorship.
-  7. Send the UserOperation via Alto bundler.
-
-**Gas Scaling UI**
-
-- Sliders for:
-  - Call Gas Limit
-  - Verification Gas Limit
-  - Pre‑verification Gas
-- Each slider:
-  - Range: **0% ~ 150%** of the bundler estimate.
-  - Color:
-    - Red `< 80%` (likely to fail),
-    - Amber `80–99%`,
-    - Green `≥ 100%`.
-
-**Mint Progress (shipping‑style timeline)**
-
-- 10 ordered steps from “encode calldata” to “submitted”.
-- WebSocket streams bundler events; when a matching event arrives:
-  - A `[event]{...}` line is appended and rendered as a timeline node.
-  - A **View details** link navigates directly to `/app/details/{userOpHash}`.
-- Error handling:
-  - viem’s verbose stack traces are not shown directly.
-  - Instead, the `Details:` line (e.g. `UserOperation reverted with reason: AA23…`) is extracted and rendered as a concise failure message like:
-    - `⚠️ Failed: UserOperation reverted with reason: AA23 reverted 0x`
-
-**NFT Holdings (My Smart Account)**
-
-- A separate card shows the SENTRA NFTs owned by the computed smart account:
-  - Tokens are rendered as small cards: thumbnail + `Token #id`.
-  - Layout uses `flex-wrap` so tokens flow horizontally and wrap naturally.
-- When a bundler event reports a successful UserOp for the smart account:
-  - totalSupply is refreshed from the NFT contract.
-  - The wallet NFT list is re‑fetched to immediately show the new token.
+<p align="center">
+  <img src="public/pages/playground-mint.png" alt="Playground mint view" width="720" />
+</p>
 
 ### 2.3 EIP‑7702 Lab
 
-- Demonstrates delegated execution via EIP‑7702 using a demo signer:
-  - Shows the 7702 authorization payload and how it interacts with EntryPoint.
-  - Reuses the Playground shipping UI and Gas Scaling components so the mental model is consistent.
+- Demonstrates delegated execution via [EIP‑7702](https://eips.ethereum.org/EIPS/eip-7702) using a demo signer.
+- Reuses the Playground shipping UI and Gas Scaling components so the mental model stays consistent.
 - Mints the same SENTRA NFT into the delegated wallet and updates a “Demo wallet holdings” card.
+
+<p align="center">
+  <img src="public/pages/eip7702.png" alt="EIP-7702 lab view" width="720" />
+</p>
 
 ### 2.4 Simulator (AA error scenarios)
 
-- Includes presets for the most common AA failure codes:
-  - AA10, AA21, AA23, AA24, AA25, AA32, AA33, AA34, AA90.
-- For each preset:
-  - **Run Error Op**: execute a UserOp purposely mis‑configured (bad initCode, wrong domain, bad nonce, invalid beneficiary, etc.).
-  - **Run Fixed Op**: execute the corrected version with the intended parameters.
-- Uses viem + EntryPoint ABI directly:
-  - Mutates things like `verificationGasLimit`, `paymasterVerificationGasLimit`, `beneficiary`, `nonce`, EIP‑712 domain, etc.
-- The UI explains failures in plain language, pairing AA codes with “what you should change” so it’s usable by support/product, not just protocol engineers.
+- Includes presets for common AA failure codes (AA10, AA21, AA23, AA24, AA25, AA32, AA33, AA34, AA90).
+- For each preset, you can run a failing UserOp and then a “fixed” version to compare.
+- Uses viem + EntryPoint ABI directly to mutate gas envelopes, beneficiary, nonce, domain, etc.
+- Explains failures in plain language so non‑protocol roles can still reason about issues.
+
+<p align="center">
+  <img src="public/pages/simulator.png" alt="Simulator error presets" width="720" />
+</p>
+
+### 2.5 Config (policy management)
+
+- Config view helps manage:
+  - Paymaster metadata (name, chain, EntryPoint).
+  - Contract and function allowlists.
+  - Per‑user allowlists for sponsored operations.
+
+<p align="center">
+  <img src="public/pages/config.png" alt="Config view" width="720" />
+</p>
 
 ---
 
@@ -213,7 +179,7 @@ The console is designed to look and feel like something an infra/payments team w
 This project was designed as more than a UI demo; it’s meant to exercise the full stack that a production AA‑based service would rely on.
 
 - **Smart contracts**
-  - Designed and implemented Paymaster, smart accounts, and NFT contracts with Solady/Soldeer patterns.
+  - Designed and implemented Paymaster, smart accounts, and NFT contracts using Solady (gas‑optimized primitives) and managed via Soldeer (Solidity package manager).
   - Used Foundry to reproduce and validate AA error codes.
   - Wrote deployment & verification scripts (Etherscan‑compatible) so contracts can be consistently shipped and audited across networks.
 - **Off‑chain indexer & APIs**
