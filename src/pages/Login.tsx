@@ -24,27 +24,6 @@ export default function Login() {
     }
   }, [token, nav]);
 
-  const connectWallet = useCallback(async () => {
-    setError(null);
-    setStatus("connecting");
-    try {
-      const wallet = await getWalletClient();
-      const addresses = await wallet.getAddresses();
-      const primary = addresses[0];
-      if (!primary) {
-        throw new Error("Wallet returned no address.");
-      }
-      setAddress(primary);
-    } catch (err) {
-      console.error(err);
-      setError(
-        err instanceof Error ? err.message : "Failed to connect wallet."
-      );
-    } finally {
-      setStatus("idle");
-    }
-  }, []);
-
   const buildSiweMessage = useCallback(
     (owner: `0x${string}`, nonce: string) => {
       const domain = window.location.host;
@@ -64,13 +43,13 @@ Issued At: ${issuedAt}`;
     []
   );
 
-  const handleSignIn = useCallback(async () => {
+  const handleSignIn = useCallback(async (connectedAddress?: `0x${string}`) => {
     setError(null);
     setStatus("signing");
     try {
       const wallet = await getWalletClient();
       const addresses = await wallet.getAddresses();
-      const primary = addresses[0];
+      const primary = connectedAddress ?? addresses[0];
       if (!primary) {
         throw new Error("Wallet returned no address.");
       }
@@ -98,6 +77,27 @@ Issued At: ${issuedAt}`;
     }
   }, [buildSiweMessage, nav, setToken]);
 
+  const connectWallet = useCallback(async () => {
+    setError(null);
+    setStatus("connecting");
+    try {
+      const wallet = await getWalletClient();
+      const addresses = await wallet.getAddresses();
+      const primary = addresses[0];
+      if (!primary) {
+        throw new Error("Wallet returned no address.");
+      }
+      setAddress(primary);
+      await handleSignIn(primary);
+    } catch (err) {
+      console.error(err);
+      setStatus("idle");
+      setError(
+        err instanceof Error ? err.message : "Failed to connect wallet."
+      );
+    }
+  }, [handleSignIn]);
+
   const buttonLabel = useMemo(() => {
     if (status === "connecting") return "Connecting…";
     if (status === "signing") return "Signing…";
@@ -114,10 +114,6 @@ Issued At: ${issuedAt}`;
           <h1 className="text-2xl font-semibold text-white">
             Sign in with Ethereum
           </h1>
-          <p className="text-sm text-slate-400">
-            Connect your wallet, sign the SIWE prompt, and unlock the rest of
-            the console.
-          </p>
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
           <div className="text-xs uppercase tracking-[0.3em] text-slate-400">
@@ -135,17 +131,14 @@ Issued At: ${issuedAt}`;
         <div className="space-y-3">
           <button
             onClick={connectWallet}
-            className="btn-secondary w-full"
-            disabled={status !== "idle"}
-          >
-            {status === "connecting" ? "Connecting…" : "Connect wallet"}
-          </button>
-          <button
-            onClick={handleSignIn}
             className="btn-primary w-full"
             disabled={status !== "idle"}
           >
-            {buttonLabel}
+            {status === "connecting" || status === "signing"
+              ? status === "connecting"
+                ? "Connecting…"
+                : buttonLabel
+              : "Sign in"}
           </button>
         </div>
         <p className="text-center text-xs text-slate-500">

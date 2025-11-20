@@ -144,6 +144,14 @@
     background: rgba(15, 23, 42, 0.85);
   }
 
+  .table-modern thead tr:first-child th:first-child {
+    border-top-left-radius: var(--radius-lg);
+  }
+
+  .table-modern thead tr:first-child th:last-child {
+    border-top-right-radius: var(--radius-lg);
+  }
+
   .table-modern th {
     font-size: 0.68rem;
     letter-spacing: 0.08em;

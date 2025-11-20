@@ -143,11 +143,11 @@ export function WalletNftsCard({
           </div>
         ) : null
       ) : (
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="flex flex-wrap gap-4">
           {tokens.map((tokenId) => (
             <div
               key={tokenId}
-              className="inline-flex w-fit flex-col gap-3 rounded border border-slate-800 bg-slate-900/40 p-3"
+              className="inline-flex flex-col gap-3 rounded border border-slate-800 bg-slate-900/40 p-3"
             >
               {imageSrc ? (
                 <img

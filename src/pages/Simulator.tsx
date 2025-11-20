@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import PageHeader from "../components/layout/PageHeader";
 import { useAuth } from "../state/auth";
 import { isEthAddress } from "../lib/address";
@@ -22,6 +22,7 @@ import { encodeFunctionData, parseAbi } from "viem";
 import { usePlaygroundStoredState } from "../hooks/usePlaygroundStoredState";
 import { getUserOperationTypedData } from "viem/account-abstraction";
 import { toSelector } from "../lib/selectors";
+import { api } from "../lib/api";
 
 type ButtonProps = {
   children: ReactNode;
@@ -97,14 +98,13 @@ const SAFE_MINT_SELECTOR = toSelector("safeMint(address,string)");
 export default function Simulator() {
   const { token } = useAuth();
   const { storedState } = usePlaygroundStoredState();
-  const lastDeploy = storedState.lastDeploy;
   const [form, setForm] = useState({
     entryPoint: storedState.paymasterEntryPoint ?? "",
     factory: storedState.simpleAccountFactory ?? "",
     owner: storedState.simpleAccountOwner ?? "",
     sender: storedState.simpleAccount ?? "",
     salt: storedState.lastSalt ?? "0",
-    target: lastDeploy?.address ?? "",
+    target: "",
     recipient: storedState.simpleAccountOwner ?? "",
   });
 
@@ -223,11 +223,32 @@ type SimulationCardConfig = {
     []
   );
 
-  const tenderlyRpc = import.meta.env.VITE_RPC_URL;
+  const tenderlyRpc = import.meta.env.RPC_URL;
 
   const updateForm = (key: keyof typeof form, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    api
+      .getContractAddress("erc721", token)
+      .then((response) => {
+        if (!active) return;
+        setForm((prev) =>
+          prev.target && prev.target.length > 0
+            ? prev
+            : { ...prev, target: response.address }
+        );
+      })
+      .catch((error) => {
+        console.error("Simulator failed to load ERC-721 address", error);
+      });
+    return () => {
+      active = false;
+    };
+  }, [token]);
 
   const handleSimulate = async (
     preset: SimulationPreset,

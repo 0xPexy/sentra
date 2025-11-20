@@ -312,39 +312,42 @@ function SummaryGrid({ detail, hash }: { detail: OperationDetail; hash: string }
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-          <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
-            Tx Hash
+      <div className="grid gap-4">
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+            <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
+              Block
+            </div>
+            <div className="mt-2 text-sm font-semibold text-slate-200">
+              {detail.blockNumber ?? "-"}
+            </div>
           </div>
-          <div className="mt-2 font-mono text-xs text-slate-200 break-all">
-            {detail.txHash ?? "-"}
-          </div>
-        </div>
-        <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-          <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
-            Block
-          </div>
-          <div className="mt-2 text-sm font-semibold text-slate-200">
-            {detail.blockNumber ?? "-"}
-          </div>
-        </div>
-        <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-          <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
-            Block Time
-          </div>
-          <div className="mt-2 text-sm text-slate-200">
-            {blockTimeDisplay ?? "-"}
+          <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+            <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
+              Block Time
+            </div>
+            <div className="mt-2 text-sm text-slate-200">
+              {blockTimeDisplay ?? "-"}
+            </div>
           </div>
         </div>
-      </div>
-
-      <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-        <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-          UserOp Hash
-        </div>
-        <div className="mt-2 font-mono text-sm text-slate-200 break-all">
-          {hash}
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+            <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
+              UserOp Hash
+            </div>
+            <div className="mt-2 font-mono text-xs text-slate-200 break-all">
+              {hash}
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+            <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
+              Tx Hash
+            </div>
+            <div className="mt-2 font-mono text-xs text-slate-200 break-all">
+              {detail.txHash ?? "-"}
+            </div>
+          </div>
         </div>
       </div>
     </div>

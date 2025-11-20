@@ -39,6 +39,7 @@ type Props = {
   simpleAccountSalt?: string;
   simpleAccountOwner?: `0x${string}` | "";
   entryPointHint?: `0x${string}` | "";
+  onMintSuccess?: () => void;
 };
 
 const GWEI = 1_000_000_000n;
@@ -49,7 +50,7 @@ const DEFAULT_PRE_VERIFICATION_GAS = 1_000_000n;
 const DEFAULT_VERIFICATION_GAS_LIMIT = 500_000n;
 const SAFE_MINT_SELECTOR = toSelector("safeMint(address,string)");
 export const NFT_METADATA_URI =
-  import.meta.env.VITE_SENTRA_NFT_URI ??
+  import.meta.env.SENTRA_NFT_URI ??
   "http://localhost:8080/api/v1/playground/nft";
 type PreparedUserOperation = Omit<UserOperation<"0.8">, "signature">;
 type PreparedContext = {
@@ -65,6 +66,7 @@ export function MintSponsoredCard({
   simpleAccountSalt = "0",
   simpleAccountOwner,
   entryPointHint,
+  onMintSuccess,
 }: Props) {
   const { token } = useAuth();
   const [paymasterInfo, setPaymasterInfo] = useState<PaymasterResponse | null>(
@@ -199,7 +201,11 @@ export function MintSponsoredCard({
     lastEventHashRef.current = eventForSender.userOpHash;
     const line = formatEventStatusLine(eventForSender);
     setStatus((prev) => (prev ? `${prev}\n${line}` : line));
-  }, [eventForSender]);
+    if (eventForSender.status?.toLowerCase() === "success") {
+      void refreshSupply();
+      onMintSuccess?.();
+    }
+  }, [eventForSender, refreshSupply, onMintSuccess]);
 
   useEffect(() => {
     let active = true;
@@ -223,6 +229,11 @@ export function MintSponsoredCard({
   }, []);
 
   const prepareUserOperation = async () => {
+    if (!token) {
+      setStatus("failed: sign in first to request sponsorship.");
+      return;
+    }
+    console.log("MintSponsoredCard prepare token:", token);
     invalidatePrepared();
     if (!isEthAddress(target)) {
       setStatus("failed: target contract address is invalid.");
@@ -310,7 +321,7 @@ export function MintSponsoredCard({
       });
       const normalizedPreparedOp = preparedOp as UserOperation<"0.8">;
 
-      const paymasterClient = getPaymasterClient();
+      const paymasterClient = getPaymasterClient(token);
       setStatus(
         (prev) => `${prev}\n4. Fetching paymaster stub data (pm_getPaymasterStubData)…`
       );
@@ -357,6 +368,10 @@ export function MintSponsoredCard({
   };
 
   const sendPreparedUserOperation = async () => {
+    if (!token) {
+      setStatus("failed: sign in first to request sponsorship.");
+      return;
+    }
     if (
       !preparedAccount ||
       !preparedUnsignedOp ||
@@ -371,7 +386,9 @@ export function MintSponsoredCard({
       return;
     }
     setStatus((prev) =>
-      prev ? `${prev}\nSending UserOperation…` : "Sending UserOperation…"
+      prev
+        ? `${prev}\n7. Scaling final gas values based on sliders…`
+        : "7. Scaling final gas values based on sliders…"
     );
     try {
       const scaledCallGasLimit = scaleGas(
@@ -394,7 +411,12 @@ export function MintSponsoredCard({
         verificationGasLimit: scaledVerificationGasLimit,
         preVerificationGas: scaledPreVerificationGas,
       };
-      const paymasterClient = getPaymasterClient();
+      const paymasterClient = getPaymasterClient(token);
+      setStatus((prev) =>
+        prev
+          ? `${prev}\n8. Fetching paymaster data (pm_getPaymasterData)…`
+          : "8. Fetching paymaster data (pm_getPaymasterData)…"
+      );
       const paymasterData = await paymasterClient.getPaymasterData({
         sender: scaledOp.sender,
         nonce: scaledOp.nonce,
@@ -431,17 +453,22 @@ export function MintSponsoredCard({
         account: preparedAccount,
         ...finalOp,
       } as Parameters<typeof bundler.sendUserOperation>[0];
+      setStatus((prev) =>
+        prev
+          ? `${prev}\n9. Sending UserOperation to bundler…`
+          : "9. Sending UserOperation to bundler…"
+      );
       const userOpHash = await bundler.sendUserOperation(userOpParams);
       setStatus(
-        (prev) =>
-          `${prev}\nsubmitted ✅\nuserOpHash: ${userOpHash}\nWaiting for totalSupply refresh…`
+        (prev) => `${prev}\n10. Submitted ✅\nuserOpHash: ${userOpHash}`
       );
-      await refreshSupply();
       invalidatePrepared();
     } catch (error) {
       console.error("sendUserOperation failed", error);
-      const message = error instanceof Error ? error.message : String(error);
-      setStatus(`failed: ${message}`);
+      const friendly = formatMintError(error);
+      setStatus((prev) =>
+        prev ? `${prev}\n⚠️ ${friendly}` : `⚠️ ${friendly}`
+      );
     }
   };
 
@@ -606,6 +633,12 @@ export function MintSponsoredCard({
               .map((line) => line.trim())
               .filter((line) => line.length > 0)
               .map((line, index, all) => {
+                const stepNumber = index + 1;
+                const stepMarker = (
+                  <span className="text-[11px] font-semibold text-slate-500 pt-0.5">
+                    {stepNumber}.
+                  </span>
+                );
                 const eventPayload = parseEventStatusLine(line);
                 if (eventPayload) {
                   const eventStatus = eventPayload.status?.toLowerCase();
@@ -626,23 +659,26 @@ export function MintSponsoredCard({
                       key={`${line}-${index}`}
                       className="flex items-start gap-3"
                     >
-                      <div className="mt-[3px] flex flex-col items-center">
-                        <span className={`h-2 w-2 rounded-full ${dotClass}`} />
-                        {index < all.length - 1 && (
-                          <span className="mt-1 h-4 w-px bg-slate-700" />
-                        )}
+                      {stepMarker}
+                      <div className="flex flex-1 items-start gap-3">
+                        <div className="mt-[3px] flex flex-col items-center">
+                          <span className={`h-2 w-2 rounded-full ${dotClass}`} />
+                          {index < all.length - 1 && (
+                            <span className="mt-1 h-4 w-px bg-slate-700" />
+                          )}
+                        </div>
+                        <span className={`${textClass} flex flex-wrap items-center gap-2`}>
+                          Bundler reported {eventPayload.status ?? "update"}.
+                          {eventPayload.userOpHash ? (
+                            <Link
+                              to={`/app/details/${eventPayload.userOpHash}`}
+                              className="text-emerald-200 underline"
+                            >
+                              View details
+                            </Link>
+                          ) : null}
+                        </span>
                       </div>
-                      <span className={`${textClass} flex flex-wrap items-center gap-2`}>
-                        Bundler reported {eventPayload.status ?? "update"}.
-                        {eventPayload.userOpHash ? (
-                          <Link
-                            to={`/app/details/${eventPayload.userOpHash}`}
-                            className="text-emerald-200 underline"
-                          >
-                            View details
-                          </Link>
-                        ) : null}
-                      </span>
                     </li>
                   );
                 }
@@ -666,13 +702,16 @@ export function MintSponsoredCard({
                   : "text-slate-200";
                 return (
                   <li key={`${line}-${index}`} className="flex items-start gap-3">
-                    <div className="mt-[3px] flex flex-col items-center">
-                      <span className={`h-2 w-2 rounded-full ${dotClass}`} />
-                      {index < all.length - 1 && (
-                        <span className="mt-1 h-4 w-px bg-slate-700" />
-                      )}
+                    {stepMarker}
+                    <div className="flex flex-1 items-start gap-3">
+                      <div className="mt-[3px] flex flex-col items-center">
+                        <span className={`h-2 w-2 rounded-full ${dotClass}`} />
+                        {index < all.length - 1 && (
+                          <span className="mt-1 h-4 w-px bg-slate-700" />
+                        )}
+                      </div>
+                      <span className={textClass}>{line}</span>
                     </div>
-                    <span className={textClass}>{line}</span>
                   </li>
                 );
               })}
@@ -717,8 +756,8 @@ function GasScalingControl({
       </div>
       <input
         type="range"
-        min={50}
-        max={200}
+        min={0}
+        max={150}
         step={5}
         value={percent}
         onChange={(event) => onChange(Number(event.target.value))}
@@ -731,4 +770,32 @@ function GasScalingControl({
 
 function scaleGas(base: bigint, percent: number) {
   return (base * BigInt(percent)) / 100n;
+}
+
+function formatMintError(error: unknown) {
+  if (!error) return "Failed: unknown error.";
+  if (error instanceof Error) {
+    const detailLine = extractErrorDetail(error.message);
+    if (detailLine) {
+      return `Failed: ${detailLine}`;
+    }
+    const nestedCause = (error as { cause?: unknown }).cause;
+    if (nestedCause && nestedCause instanceof Error) {
+      const nestedDetail = extractErrorDetail(nestedCause.message);
+      if (nestedDetail) {
+        return `Failed: ${nestedDetail}`;
+      }
+    }
+    return `Failed: ${error.message}`;
+  }
+  return `Failed: ${String(error)}`;
+}
+
+function extractErrorDetail(message: string | undefined) {
+  if (!message) return null;
+  const match = message.match(/Details:\s*([^\n]+)/);
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+  return null;
 }

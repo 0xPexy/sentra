@@ -19,7 +19,7 @@ export default function ProtectedRoute({
   children: React.JSX.Element;
   access?: AccessLevel;
 }) {
-  const { role, loading } = useAuth();
+  const { role, loading, token } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -35,7 +35,10 @@ export default function ProtectedRoute({
   }
 
   if (role === "guest") {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    if (!token) {
+      return <Navigate to="/login" state={{ from: location }} replace />;
+    }
+    return <Navigate to="/" replace />;
   }
 
   return <Navigate to="/app" replace />;

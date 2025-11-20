@@ -16,12 +16,12 @@ export default function Playground() {
   >("loading");
   const [erc721Error, setErc721Error] = useState<string | null>(null);
 
-  const lastDeploy = storedState.lastDeploy ?? null;
   const defaultMintSender =
     storedState.simpleAccount && storedState.simpleAccount.length > 0
       ? storedState.simpleAccount
-      : storedState.minter || lastDeploy?.minter || "";
-  const resolvedTarget = erc721Address || lastDeploy?.address || "";
+      : storedState.minter || "";
+  const resolvedTarget = erc721Address;
+  const [nftRefreshSignal, setNftRefreshSignal] = useState(0);
   const overviewItems = useMemo(
     () => [
       {
@@ -131,6 +131,9 @@ export default function Playground() {
         simpleAccountSalt={storedState.lastSalt ?? "0"}
         simpleAccountOwner={storedState.simpleAccountOwner ?? ""}
         entryPointHint={storedState.paymasterEntryPoint ?? ""}
+        onMintSuccess={() =>
+          setNftRefreshSignal((prev) => (Number.isSafeInteger(prev) ? prev + 1 : 0))
+        }
       />
       <WalletNftsCard
         owner={
@@ -139,6 +142,7 @@ export default function Playground() {
             : ""
         }
         authToken={token}
+        refreshSignal={nftRefreshSignal}
       />
     </div>
   );

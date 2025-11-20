@@ -52,7 +52,7 @@ export function parseEventStatusLine(
 }
 
 export function resolveEventsWsUrl() {
-  const apiBase = import.meta.env.VITE_API_URL?.replace(/\/+$/, "");
+  const apiBase = import.meta.env.API_URL?.replace(/\/+$/, "");
   if (apiBase) {
     const url = new URL(apiBase);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";

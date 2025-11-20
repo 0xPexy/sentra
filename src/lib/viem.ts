@@ -93,7 +93,7 @@ export const tenderlyTestNet = defineChain({
   },
   rpcUrls: {
     default: {
-      http: [import.meta.env.VITE_RPC_URL],
+      http: [import.meta.env.RPC_URL],
     },
   },
 });
@@ -113,10 +113,10 @@ let cachedHttpClient:
 
 export function getPublicClient() {
   if (!cachedHttpClient) {
-    const rpcUrl = import.meta.env.VITE_RPC_URL;
+    const rpcUrl = import.meta.env.RPC_URL;
     if (!rpcUrl) {
       throw new Error(
-        "VITE_RPC_URL must be defined when no wallet provider is available"
+        "RPC_URL must be defined when no wallet provider is available"
       );
     }
     cachedHttpClient = createPublicClient<
@@ -170,14 +170,14 @@ const paymasterClients = new Map<
 let cachedBundlerClient: ReturnType<typeof createBundlerClient> | null = null;
 
 export function getPaymasterClient(token?: string | null) {
-  const apiBase = import.meta.env.VITE_API_URL?.replace(/\/+$/, "") ?? "";
+  const apiBase = import.meta.env.API_URL?.replace(/\/+$/, "") ?? "";
   const endpoint = apiBase ? `${apiBase}/api/v1/erc7677` : "/api/v1/erc7677";
   const key = token ?? "__anon__";
   if (!paymasterClients.has(key)) {
     const headers: Record<string, string> = {};
     if (token) headers.Authorization = `Bearer ${token}`;
-    if (import.meta.env.VITE_DEV_TOKEN) {
-      headers.Authorization = `Bearer ${import.meta.env.VITE_DEV_TOKEN}`;
+    if (import.meta.env.DEV_TOKEN) {
+      headers.Authorization = `Bearer ${import.meta.env.DEV_TOKEN}`;
     }
     paymasterClients.set(
       key,
@@ -203,7 +203,7 @@ function resolveChain(chainId?: number | string): Chain | undefined {
 export function getBundlerClient(chainId?: number) {
   if (!cachedBundlerClient) {
     const chain = resolveChain(chainId);
-    const rpcUrl = import.meta.env.VITE_RPC_URL;
+    const rpcUrl = import.meta.env.RPC_URL;
     if (!rpcUrl) {
       throw new Error("VITE_RPC_URL is not configured");
     }
@@ -253,8 +253,8 @@ export function getBundlerClientBySimpleAccount(account: SmartAccount) {
 function createBundlerTransport() {
   const proxyUrl = resolveBundlerProxyUrl();
   const headers: Record<string, string> = {};
-  if (import.meta.env.VITE_DEV_TOKEN) {
-    headers["sentra-dev-token"] = import.meta.env.VITE_DEV_TOKEN;
+  if (import.meta.env.DEV_TOKEN) {
+    headers["sentra-dev-token"] = import.meta.env.DEV_TOKEN;
   }
   return http(proxyUrl, {
     fetchOptions: {
@@ -264,7 +264,7 @@ function createBundlerTransport() {
 }
 
 function resolveBundlerProxyUrl() {
-  const apiBase = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
+  const apiBase = (import.meta.env.API_URL ?? "").replace(/\/+$/, "");
   if (apiBase) return `${apiBase}/api/v1/bundler`;
   return "/api/v1/bundler";
 }

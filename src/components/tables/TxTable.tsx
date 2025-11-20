@@ -11,7 +11,7 @@ type Tx = {
 
 export default function TxTable({ rows }: { rows: Tx[] }) {
   return (
-    <div className="surface-card">
+    <div className="surface-card overflow-hidden">
       <div className="overflow-x-auto">
         <table className="table-modern text-sm">
           <thead>

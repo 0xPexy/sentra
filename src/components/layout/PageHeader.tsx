@@ -11,9 +11,10 @@ type PageHeaderProps = {
 };
 
 export default function PageHeader({ title }: PageHeaderProps) {
-  const { logout } = useAuth();
+  const { logout, role, address } = useAuth();
   const [account, setAccount] = useState<`0x${string}` | null>(null);
   const [balance, setBalance] = useState<string | null>(null);
+  const isAdmin = role === "admin";
 
   const refreshBalance = useCallback(async (address: `0x${string}`) => {
     try {
@@ -120,6 +121,10 @@ export default function PageHeader({ title }: PageHeaderProps) {
     if (!account) return "";
     return `${account.slice(0, 8)}…${account.slice(-6)}`;
   }, [account]);
+  const adminAddressDisplay = useMemo(() => {
+    if (!isAdmin || !address) return null;
+    return `${address.slice(0, 6)}…${address.slice(-4)}`;
+  }, [isAdmin, address]);
 
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -127,6 +132,12 @@ export default function PageHeader({ title }: PageHeaderProps) {
         {title}
       </h2>
       <div className="flex items-center gap-3">
+        {isAdmin ? (
+          <div className="inline-flex items-center gap-2 rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-300" />
+            Admin
+          </div>
+        ) : null}
         {account ? (
           <div className="surface-card surface-card--muted flex items-center gap-3 rounded-full px-4 py-2 text-sm">
             <span className="h-2 w-2 rounded-full bg-emerald-400" />

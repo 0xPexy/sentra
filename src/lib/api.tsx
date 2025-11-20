@@ -1,7 +1,7 @@
 import { toHex, zeroAddress } from "viem";
 import { getPaymasterClient } from "./viem";
 
-export const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
+export const API_BASE = import.meta.env.API_URL ?? "http://localhost:8080";
 
 export class ApiError extends Error {
   status: number;
@@ -21,8 +21,8 @@ async function req<T>(
   const res = await fetch(`${API_BASE}${path}`, {
     headers: {
       "content-type": "application/json",
-      ...(import.meta.env.VITE_DEV_TOKEN
-        ? { "sentra-dev-token": import.meta.env.VITE_DEV_TOKEN }
+      ...(import.meta.env.DEV_TOKEN
+        ? { "sentra-dev-token": import.meta.env.DEV_TOKEN }
         : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
